@@ -127,6 +127,8 @@ private val SERIES_PLAYBACK_TYPES = setOf("series", "tv", "anime", "episode")
 private const val SOURCE_SELECTION_COMMIT_MIN_POSITION_MS = 5_000L
 // A next-episode hand-off that hasn't started playback by then is reported and falls back to the source list.
 private const val AUTOPLAY_STALL_MS = 45_000L
+// Once the next episode is opened: time allowed for its first frame (torrents start slowly).
+private const val AUTOPLAY_FIRST_FRAME_MS = 60_000L
 private const val SOURCE_SELECTION_FAILURE_RESET_MAX_POSITION_MS = 1_000L
 
 private data class PlayerSubtitlePayload(
@@ -970,6 +972,8 @@ class MainActivity : ComponentActivity() {
             var torrentProgress by remember { mutableStateOf<TorrentProgress?>(null) }
             // What the app is doing around playback (fallback, debrid wait); cleared on the next first frame.
             var playbackStatus by remember { mutableStateOf<String?>(null) }
+            // The episode an autoplay hand-off opened, until its first frame draws.
+            var awaitingFirstFrameId by remember { mutableStateOf<String?>(null) }
             var selectedMovieTitle by rememberSaveable { mutableStateOf("") }
             var selectedMoviePoster by rememberSaveable { mutableStateOf("") }
             var selectedMovieBackground by rememberSaveable { mutableStateOf("") }
@@ -2296,6 +2300,26 @@ class MainActivity : ComponentActivity() {
                                             )
                                             switchStep = "opening the source"
                                             playbackStatus = "Next episode · opening $nextPlaybackTitle"
+                                            // Opening can stall after the switch itself is done: the new
+                                            // episode never draws. Wait for its first frame, not the switch.
+                                            awaitingFirstFrameId = nextPlaybackId
+                                            val openedKind = if (nextUrl.startsWith("magnet:")) "torrent" else "direct link"
+                                            val openedFrom = streamToPlay.addonDisplayName ?: "unknown addon"
+                                            uiScope.launch {
+                                                delay(AUTOPLAY_FIRST_FRAME_MS)
+                                                if (playerState.episodeSwitchGeneration == switchGeneration &&
+                                                    awaitingFirstFrameId == nextPlaybackId
+                                                ) {
+                                                    com.hereliesaz.illumera.crash.AppErrors.e(
+                                                        "Autoplay",
+                                                        "Next episode opened ($openedKind from $openedFrom) but drew no frame in " +
+                                                            "${AUTOPLAY_FIRST_FRAME_MS / 1000}s; url set: ${selectedVideoUrl.isNotBlank()}, " +
+                                                            "torrent: ${torrentProgress?.status ?: "none"}"
+                                                    )
+                                                    awaitingFirstFrameId = null
+                                                    showSourceList()
+                                                }
+                                            }
                                             val subtitlePayload = buildSubtitlePayload(streamToPlay, sourceAwareSubs)
                                             val sourcePayload = buildSourcePayload(streams, streamToPlay)
 
@@ -2683,7 +2707,10 @@ class MainActivity : ComponentActivity() {
                                 },
                                 torrentProgress = torrentProgress,
                                 playbackStatus = playbackStatus,
-                                onFirstFrameRendered = { playbackStatus = null },
+                                onFirstFrameRendered = {
+                                    playbackStatus = null
+                                    awaitingFirstFrameId = null
+                                },
                                 autoFallbackEnabled = currentProfile?.autoSelectSource == true && currentProfile?.sourceAutoFallback != false,
                                 onSuspectSource = { status ->
                                     uiScope.launch {
