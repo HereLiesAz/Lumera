@@ -11,6 +11,12 @@ import com.hereliesaz.illumera.data.remote.TraktSyncApiService
 import com.hereliesaz.illumera.data.repository.AddonRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -366,9 +372,36 @@ class QueueManager @Inject constructor(
         }
     }
 
+    @Volatile
+    private var refreshRun: Deferred<Unit>? = null
+
+    /**
+     * Rebuilds the suggestions. Refreshes never overlap: starting one cancels any still
+     * running, so the newest request always decides the row. A superseded call returns
+     * normally; only real cancellation of the caller propagates.
+     */
     suspend fun refreshSuggestions(
         resetDismissed: Boolean = false,
         preserveExisting: Boolean = false
+    ): Unit = coroutineScope {
+        val run = async(start = CoroutineStart.LAZY) {
+            runSuggestionRefresh(resetDismissed, preserveExisting)
+        }
+        val previous = synchronized(this@QueueManager) { refreshRun.also { refreshRun = run } }
+        try {
+            previous?.cancelAndJoin()
+            run.await()
+        } catch (cancelled: CancellationException) {
+            val superseded = synchronized(this@QueueManager) { refreshRun !== run }
+            if (!superseded || !isActive) throw cancelled
+        } finally {
+            synchronized(this@QueueManager) { if (refreshRun === run) refreshRun = null }
+        }
+    }
+
+    private suspend fun runSuggestionRefresh(
+        resetDismissed: Boolean,
+        preserveExisting: Boolean
     ) {
         val scope = captureScope() ?: return
         val current = stateForScope(scope) ?: return

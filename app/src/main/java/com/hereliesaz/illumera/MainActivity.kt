@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -117,7 +116,6 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /** Profile picker only: two Back presses this close together leave the app. */
-private const val PROFILE_PICKER_DOUBLE_BACK_MS = 400L
 
 private fun launchExternalPlayer(context: android.content.Context, url: String) {
     try {
@@ -681,16 +679,10 @@ class MainActivity : ComponentActivity() {
                 ) {
                 LumeraBackground {
                     if (currentProfile == null) {
-                        // Double-back-to-exit on profile selection
-                        var lastBackPressMs by remember { mutableStateOf(0L) }
-                        BackHandler {
-                            val now = SystemClock.uptimeMillis()
-                            if (now - lastBackPressMs < PROFILE_PICKER_DOUBLE_BACK_MS) {
-                                finishAffinity()
-                            } else {
-                                lastBackPressMs = now
-                            }
-                        }
+                        // Same rule as the main screens: Back at a root with nothing left to unwind
+                        // exits. The picker has no menu to open first, so one Back exits; its own
+                        // dialogs register later and close before this runs.
+                        BackHandler { finishAffinity() }
 
                         val isRestoringSession = sessionProfileId != null
                         if (!isRestoringSession) {

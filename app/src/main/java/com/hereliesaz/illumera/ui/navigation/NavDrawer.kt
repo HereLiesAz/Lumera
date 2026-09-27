@@ -116,6 +116,19 @@ class NavDrawerContentState {
     @OptIn(ExperimentalComposeUiApi::class)
     fun restoreContentFocus(): Boolean =
         runCatching { contentFocusRequester.restoreFocusedChild() }.getOrDefault(false)
+
+    /**
+     * Leaves the menu for the content: the element that had focus, else [screenEntry] (the
+     * screen's own entry point), else whatever the content layer offers first. The last step
+     * matters when the saved element became unfocusable (a button disabled while it works)
+     * and the entry point isn't composed (an empty list) — without it focus stayed in the
+     * menu with no way out but another screen.
+     */
+    fun returnFocusToContent(screenEntry: () -> Unit) {
+        if (restoreContentFocus()) return
+        runCatching { screenEntry() }
+        if (!contentHasFocus) runCatching { contentFocusRequester.requestFocus() }
+    }
 }
 
 @Composable
@@ -172,9 +185,7 @@ fun NavDrawerRail(
     // back to the screen's entry requester (onClose) when there is nothing to restore
     // (e.g. the menu was opened by touch, or the element is gone). Closing never selects
     // or navigates.
-    val closeMenu: () -> Unit = {
-        if (!contentState.restoreContentFocus()) onClose()
-    }
+    val closeMenu: () -> Unit = { contentState.returnFocusToContent(onClose) }
     // Back while open. MainShell passes its policy (exit when root Back opened the menu);
     // on its own the rail closes, like Right.
     val backFromMenu: () -> Unit = onBack ?: closeMenu

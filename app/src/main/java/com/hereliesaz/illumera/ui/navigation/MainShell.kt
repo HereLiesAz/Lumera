@@ -171,7 +171,7 @@ fun MainShell(
         state.closeMenuAction = if (isTop) {
             onEnterContent
         } else {
-            { if (!contentState.restoreContentFocus()) onEnterContent() }
+            { contentState.returnFocusToContent(onEnterContent) }
         }
         state.exitAction = onExit
     }

@@ -10,6 +10,9 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -219,6 +222,36 @@ class QueueManagerTest {
             // Expected: cancellation remains control flow, not a failed network request.
         }
 
+        assertFalse(queue.state.value.isRefreshingSuggestions)
+    }
+
+    @Test
+    fun newerSuggestionRefreshSupersedesTheOneStillRunning() = runTest {
+        val addonDao = mockk<AddonDao>(relaxed = true)
+        val firstGate = CompletableDeferred<Unit>()
+        var calls = 0
+        coEvery { addonDao.getAllWatchHistoryOnce() } coAnswers {
+            if (++calls == 1) {
+                firstGate.await()
+                listOf(WatchHistoryEntity(id = "tt-old", title = "Old", poster = null, position = 1, duration = 100, lastWatched = 1, type = "movie"))
+            } else {
+                listOf(WatchHistoryEntity(id = "tt-new", title = "New", poster = null, position = 1, duration = 100, lastWatched = 1, type = "movie"))
+            }
+        }
+        val queue = newManager(addonDao = addonDao)
+        queue.setEnabled(true)
+
+        val first = launch { queue.refreshSuggestions() }
+        runCurrent()
+        assertTrue(queue.state.value.isRefreshingSuggestions)
+
+        queue.refreshSuggestions()
+        firstGate.complete(Unit)
+        first.join()
+
+        // The first call ended quietly (not cancelled from outside) and never wrote its result.
+        assertFalse(first.isCancelled)
+        assertEquals(listOf("tt-new"), queue.state.value.suggestions.map { it.id })
         assertFalse(queue.state.value.isRefreshingSuggestions)
     }
 

@@ -267,13 +267,14 @@ fun QueueSection(
                 }
             )
 
-            val refreshEnabled = state.preferences.enabled && !state.isRefreshingSuggestions
             val refreshInteraction = remember { MutableInteractionSource() }
             val refreshFocused by refreshInteraction.collectIsFocusedAsState()
-            val refreshColors = buttonColors(focused = refreshFocused, enabled = refreshEnabled)
+            val refreshColors = buttonColors(focused = refreshFocused, enabled = state.preferences.enabled)
+            // Stays enabled while refreshing: disabling the button the viewer just pressed took
+            // focus away from under them. Pressing again restarts the refresh (newest wins).
             Button(
                 onClick = { scope.launch { queueManager.refreshSuggestions(resetDismissed = true) } },
-                enabled = refreshEnabled,
+                enabled = state.preferences.enabled,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = refreshColors.container,
                     contentColor = refreshColors.content,
