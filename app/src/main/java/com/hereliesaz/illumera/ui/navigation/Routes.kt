@@ -23,8 +23,11 @@ data object MainKey : NavKey
 data class GridKey(val title: String, val configId: String) : NavKey
 
 /**
- * A Details page with its own nested cast/studio/recommendation stack. [instance] keeps
- * two pages for the same title (a queue advance within one show) apart on the stack.
+ * A title's Details page. [title], [poster] and [logo] are what the opener already knew, shown
+ * until the page resolves its own and handed to the player when playback starts here.
+ * [queueAutoPlayId] is the episode or movie a queue advance asks the page to start; the page
+ * starts it once (DetailsViewModel remembers that it did). [instance] keeps two pages for the
+ * same title (a queue advance within one show, or a recommendation loop) apart on the stack.
  */
 @Serializable
 data class DetailsKey(
@@ -34,6 +37,27 @@ data class DetailsKey(
     val title: String = "",
     val poster: String = "",
     val logo: String = "",
+    val queueAutoPlayId: String? = null,
+    val instance: Int = 0
+) : NavKey {
+    /** Names this page to the playback session, which hands its resume hint back to it. */
+    val playbackOwnerTag: String get() = "$type:$id:$instance"
+}
+
+/**
+ * A cast member's filmography, opened from a Details page. [instance], like DetailsKey's, keeps
+ * the same person opened twice on one stack (via another title) two distinct entries.
+ */
+@Serializable
+data class CastKey(val personId: Int, val name: String, val instance: Int = 0) : NavKey
+
+/** A studio, network or company's titles, opened from a Details page. */
+@Serializable
+data class StudioKey(
+    val entityId: Int,
+    val kind: String,
+    val name: String,
+    val sourceType: String,
     val instance: Int = 0
 ) : NavKey
 
@@ -48,6 +72,8 @@ val AppBackStackConfiguration: SavedStateConfiguration = SavedStateConfiguration
             subclass(MainKey::class, MainKey.serializer())
             subclass(GridKey::class, GridKey.serializer())
             subclass(DetailsKey::class, DetailsKey.serializer())
+            subclass(CastKey::class, CastKey.serializer())
+            subclass(StudioKey::class, StudioKey.serializer())
             subclass(PlayerKey::class, PlayerKey.serializer())
         }
     }
@@ -61,6 +87,7 @@ val AppBackStackConfiguration: SavedStateConfiguration = SavedStateConfiguration
  * - Back pops one entry; at [MainKey] alone it pops nothing and the menu area handles Back.
  * - Leaving the player pops only the player, so Back lands on whatever opened it.
  * - A queue advance replaces the player with the next item's Details on top of the stack.
+ * - Details, Cast and Studio pages are flat entries: each opened page is pushed, Back pops it.
  */
 object BackStackOps {
 
@@ -71,7 +98,8 @@ object BackStackOps {
         addon: String? = null,
         title: String = "",
         poster: String = "",
-        logo: String = ""
+        logo: String = "",
+        queueAutoPlayId: String? = null
     ) {
         stack.add(
             DetailsKey(
@@ -81,9 +109,18 @@ object BackStackOps {
                 title = title,
                 poster = poster,
                 logo = logo,
+                queueAutoPlayId = queueAutoPlayId,
                 instance = stack.count { it is DetailsKey }
             )
         )
+    }
+
+    fun openCast(stack: MutableList<NavKey>, personId: Int, name: String) {
+        stack.add(CastKey(personId, name, instance = stack.count { it is CastKey }))
+    }
+
+    fun openStudio(stack: MutableList<NavKey>, entityId: Int, kind: String, name: String, sourceType: String) {
+        stack.add(StudioKey(entityId, kind, name, sourceType, instance = stack.count { it is StudioKey }))
     }
 
     fun openGrid(stack: MutableList<NavKey>, title: String, configId: String) {
@@ -109,10 +146,11 @@ object BackStackOps {
         type: String,
         id: String,
         title: String,
-        poster: String
+        poster: String,
+        queueAutoPlayId: String? = null
     ) {
         returnFromPlayer(stack)
-        openDetails(stack, type = type, id = id, title = title, poster = poster)
+        openDetails(stack, type = type, id = id, title = title, poster = poster, queueAutoPlayId = queueAutoPlayId)
     }
 
     /** Back: pops one entry unless only [MainKey] is left. */

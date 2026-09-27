@@ -74,16 +74,17 @@ fun StudioDetailScreen(
     entityKind: String,
     entityName: String,
     sourceType: String = "movie",
-    onBackPress: () -> Unit = {},
     onNavigateToDetails: (type: String, id: String) -> Unit = { _, _ -> },
-    viewModel: StudioDetailViewModel = hiltViewModel()
+    viewModel: StudioDetailViewModel = hiltViewModel<StudioDetailViewModel, StudioDetailViewModel.Factory>(
+        creationCallback = { it.create(entityId, entityKind, sourceType) }
+    )
 ) {
     val uiState by viewModel.state.collectAsState()
     val bg = MaterialTheme.colorScheme.background
     val accentColor = MaterialTheme.colorScheme.primary
     val textColor = MaterialTheme.colorScheme.onBackground
 
-    androidx.activity.compose.BackHandler { onBackPress() }
+    // Back belongs to the app's back stack (NavDisplay pops this page).
 
     Box(modifier = Modifier.fillMaxSize().background(bg)) {
         when (val state = uiState) {

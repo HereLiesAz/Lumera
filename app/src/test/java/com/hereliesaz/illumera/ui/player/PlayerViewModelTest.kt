@@ -13,8 +13,11 @@ import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -25,6 +28,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import androidx.lifecycle.viewModelScope
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerViewModelTest {
@@ -128,5 +132,38 @@ class PlayerViewModelTest {
         profileOne.value = profileOne.value.copy(watchedThreshold = 150)
         advanceUntilIdle()
         assertEquals(0.99, viewModel.watchedThreshold.value, 0.0001)
+    }
+
+    @Test
+    fun scrobblesAndProgressFinishWhenThePlayerEntryIsCleared() = runTest(dispatcher) {
+        val trakt = mockk<TraktScrobbleManager>(relaxed = true)
+        val wutch = mockk<WutchManager>(relaxed = true)
+        val finished = mutableListOf<String>()
+        coEvery { trakt.scrobbleStart(any(), any(), any(), any()) } coAnswers { delay(5_000); finished += "start" }
+        coEvery { trakt.scrobblePause(any(), any(), any(), any(), any()) } coAnswers { delay(5_000); finished += "pause" }
+        coEvery { trakt.scrobbleStop(any(), any(), any(), any()) } coAnswers { delay(5_000); finished += "stop" }
+        val viewModel = PlayerViewModel(
+            dao = dao,
+            traktScrobbleManager = trakt,
+            wutchManager = wutch,
+            stremioLibrarySyncManager = mockk<StremioLibrarySyncManager>(relaxed = true),
+            profileConfigurationManager = profileManager
+        )
+        viewModel.ioDispatcher = dispatcher
+
+        val hour = 60L * 60_000L
+        viewModel.scrobbleStart("tt1", "movie", 1_000L, hour)
+        viewModel.scrobblePause("tt1", "movie", 2_000L, hour)
+        viewModel.scrobbleStop("tt1", "movie", 3_000L, hour)
+        advanceTimeBy(1_000)
+        // The player leaves: its entry's ViewModelStore clears this ViewModel mid-request.
+        viewModel.viewModelScope.cancel()
+        // Sent after the clear too (the player's dispose runs after it).
+        viewModel.scrobbleStop("tt1", "movie", 4_000L, hour)
+        advanceUntilIdle()
+
+        assertEquals(listOf("start", "pause", "stop", "stop"), finished)
+        coVerify { wutch.onPlayback("tt1", 2_000L, finished = false) }
+        coVerify { wutch.onPlayback("tt1", 4_000L, any()) }
     }
 }

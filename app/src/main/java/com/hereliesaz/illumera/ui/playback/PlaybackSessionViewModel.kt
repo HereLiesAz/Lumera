@@ -80,6 +80,19 @@ sealed interface PlaybackNav {
 }
 
 /**
+ * The Details page a playback starts from: the show whose episodes play (next-episode and
+ * saved-progress ids are built from [showId]), its title and art for the player, and
+ * [ownerTag], the page that gets the resume hint back when the session ends.
+ */
+data class PlaybackOrigin(
+    val ownerTag: String,
+    val showId: String,
+    val title: String,
+    val poster: String,
+    val logo: String
+)
+
+/**
  * Playback state and actions for the activity: what is playing, its sources and subtitles,
  * the torrent behind it, the autoplay/queue flags, and the jobs that switch episodes and fall
  * back between sources. Scoped to the activity, so it survives configuration changes; the
@@ -110,8 +123,17 @@ class PlaybackSessionViewModel @Inject constructor(
     var selectedPlaybackType by saved("selectedPlaybackType", "movie")
     var selectedPlaybackTitle by saved("selectedPlaybackTitle", "")
     var selectedPlaybackPoster by saved("selectedPlaybackPoster", "")
-    // The playback Details should offer to resume, set when a session ends part-way.
+    // The playback Details should offer to resume, set when a session ends part-way. It
+    // belongs to the page that started the playback (resumeHintOwner); see resumeHintFor.
     var detailsResumePlaybackHint by saved<String?>("detailsResumePlaybackHint", null)
+    private var resumeHintOwner by saved<String?>("resumeHintOwner", null)
+
+    // The Details page the current playback came from (PlaybackOrigin), not whatever page
+    // was opened last: the show's id, title and logo for the player and its episode ids.
+    var playbackSeriesId by saved("playbackSeriesId", "")
+    var playbackSeriesTitle by saved("playbackSeriesTitle", "")
+    var playbackLogo by saved("playbackLogo", "")
+    private var playbackOwnerTag by saved<String?>("playbackOwnerTag", null)
 
     // Autoplay has two owners. Playback the queue started on its own follows the
     // queue's mode: a whole-show item plays straight through, an episode item plays
@@ -163,11 +185,31 @@ class PlaybackSessionViewModel @Inject constructor(
     val isQueueSingleEpisode: Boolean
         get() = queuePlaybackActive && !queueWholeShowActive
 
-    /** The episode after the current one of [seriesId], when this playback has one. */
-    fun nextEpisodeFor(seriesId: String): MetaVideo? =
+    /** The episode after the current one of the playing show, when this playback has one. */
+    fun nextEpisode(): MetaVideo? =
         if (isSeriesPlayback && !isQueueSingleEpisode && currentEpisodeList.isNotEmpty()) {
-            findNextEpisode(seriesId, selectedPlaybackId, currentEpisodeList)
+            findNextEpisode(playbackSeriesId, selectedPlaybackId, currentEpisodeList)
         } else null
+
+    /**
+     * The resume hint for the Details page [ownerTag]: set when a playback that page started
+     * ended part-way, null for every other page.
+     */
+    fun resumeHintFor(ownerTag: String): String? =
+        detailsResumePlaybackHint?.takeIf { resumeHintOwner == ownerTag }
+
+    /** A title was opened fresh from a menu screen: no older hint applies to it. */
+    fun clearResumeHint() {
+        detailsResumePlaybackHint = null
+        resumeHintOwner = null
+    }
+
+    private fun adoptOrigin(origin: PlaybackOrigin?) {
+        playbackOwnerTag = origin?.ownerTag
+        playbackSeriesId = origin?.showId.orEmpty()
+        playbackSeriesTitle = origin?.title.orEmpty()
+        playbackLogo = origin?.logo.orEmpty()
+    }
 
     // ---- Torrent ----
 
@@ -202,15 +244,15 @@ class PlaybackSessionViewModel @Inject constructor(
     // ---- Starting playback ----
 
     /**
-     * Plays [stream] picked on Details. [playbackTitle] and [poster] are already resolved
+     * Plays [stream] picked on the Details page [origin]. [playbackTitle] is already resolved
      * against the title on screen; [persistProfileState] runs before the player opens.
      */
     fun startFromDetails(
+        origin: PlaybackOrigin,
         url: String,
         playbackId: String,
         playbackType: String,
         playbackTitle: String,
-        poster: String,
         stream: Stream,
         addonSubtitles: List<AddonSubtitle>,
         availableStreams: List<Stream>,
@@ -232,10 +274,11 @@ class PlaybackSessionViewModel @Inject constructor(
             candidateStreams = sourcePayloadInput
         )
         fun select(videoUrl: String) {
+            adoptOrigin(origin)
             selectedPlaybackId = playbackId
             selectedPlaybackType = playbackType
             selectedPlaybackTitle = playbackTitle
-            selectedPlaybackPoster = poster
+            selectedPlaybackPoster = origin.poster
             selectedTrailerAudioUrl = ""
             selectedPlayerSubtitles = subtitlePayload
             selectedPlayerSources = sourcePayload
@@ -272,6 +315,7 @@ class PlaybackSessionViewModel @Inject constructor(
         selectedPlayerSubtitles = emptyList()
         selectedPlayerSources = emptyList()
         pendingSourceSelection = null
+        adoptOrigin(null)
         selectedPlaybackId = "debrid_$id"
         selectedPlaybackType = "movie"
         selectedPlaybackTitle = title
@@ -281,19 +325,22 @@ class PlaybackSessionViewModel @Inject constructor(
         openFor(playerPreference, url)
     }
 
-    /** Resolves the YouTube trailer [youtubeKey] and plays it. */
-    fun startTrailer(youtubeKey: String, trailerName: String, movieType: String, poster: String) {
+    /** Resolves the YouTube trailer [youtubeKey] of the Details page [origin] and plays it. */
+    fun startTrailer(origin: PlaybackOrigin, youtubeKey: String, trailerName: String, movieType: String) {
         isTrailerLoading = true
         viewModelScope.launch {
             val source = youTubeExtractor.get().extractPlaybackSource(youtubeKey)
             isTrailerLoading = false
             if (source != null) {
+                adoptOrigin(origin)
+                // A trailer has no episodes; a list left from the last playback would offer one.
+                currentEpisodeList = emptyList()
                 selectedVideoUrl = source.videoUrl
                 selectedTrailerAudioUrl = source.audioUrl ?: ""
                 selectedPlaybackId = "trailer_$youtubeKey"
                 selectedPlaybackType = movieType
                 selectedPlaybackTitle = trailerName
-                selectedPlaybackPoster = poster
+                selectedPlaybackPoster = origin.poster
                 selectedPlayerSubtitles = emptyList()
                 selectedPlayerSources = emptyList()
                 navChannel.trySend(PlaybackNav.OpenPlayer)
@@ -316,12 +363,11 @@ class PlaybackSessionViewModel @Inject constructor(
     // ---- Episode switching ----
 
     /**
-     * The current episode reached its end and [nextEpisode] of [seriesId] follows: marks this
-     * one completed and opens the next, by bingeGroup, remembered source or first playable
+     * The current episode reached its end and [nextEpisode] of the playing show follows: marks
+     * this one completed and opens the next, by bingeGroup, remembered source or first playable
      * source, or shows its source list. Two watchdogs report a hand-off that stalls.
      */
     fun autoplayNextEpisode(
-        seriesId: String,
         nextEpisode: MetaVideo,
         playerCurrentSourceUrl: String?,
         profile: ProfileEntity?
@@ -341,8 +387,8 @@ class PlaybackSessionViewModel @Inject constructor(
             profile
         )
 
-        val nextPlaybackId = episodePlaybackId(seriesId, nextEpisode)
-        val nextStreamId = episodeStreamId(seriesId, nextEpisode)
+        val nextPlaybackId = episodePlaybackId(playbackSeriesId, nextEpisode)
+        val nextStreamId = episodeStreamId(playbackSeriesId, nextEpisode)
         val nextPlaybackTitle = episodeDisplayTitle(nextEpisode)
 
         val autoplay = autoplayNextEnabled(profile?.autoplayNextEpisode == true)
@@ -499,9 +545,8 @@ class PlaybackSessionViewModel @Inject constructor(
         }
     }
 
-    /** The viewer picked [episode] of [seriesId] from the player's episode list. */
+    /** The viewer picked [episode] of the playing show from the player's episode list. */
     fun selectEpisode(
-        seriesId: String,
         episode: MetaVideo,
         playerCurrentSourceUrl: String?,
         profile: ProfileEntity?
@@ -511,8 +556,8 @@ class PlaybackSessionViewModel @Inject constructor(
         // network call happened to finish last would otherwise win,
         // regardless of which episode the user actually intended last.
         if (isEpisodeSwitchLoading) return
-        val epPlaybackId = episodePlaybackId(seriesId, episode)
-        val epStreamId = episodeStreamId(seriesId, episode)
+        val epPlaybackId = episodePlaybackId(playbackSeriesId, episode)
+        val epStreamId = episodeStreamId(playbackSeriesId, episode)
         val epTitle = episodeDisplayTitle(episode)
 
         // Picking an episode by hand is the viewer's choice, not the queue's.
@@ -852,7 +897,10 @@ class PlaybackSessionViewModel @Inject constructor(
             sourceSelectionStore = sourceSelectionStore,
             pendingSourceSelection = pendingSourceSelection,
             onConsumePendingSelection = { pendingSourceSelection = null },
-            onResumeHintResolved = { detailsResumePlaybackHint = it },
+            onResumeHintResolved = {
+                detailsResumePlaybackHint = it
+                resumeHintOwner = playbackOwnerTag
+            },
             rememberSourceSelection = profile?.rememberSourceSelection ?: true
         )
     }

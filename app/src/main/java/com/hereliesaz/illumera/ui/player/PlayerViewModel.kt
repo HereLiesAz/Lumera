@@ -10,6 +10,7 @@ import com.hereliesaz.illumera.data.profile.ProfileConfigurationManager
 import com.hereliesaz.illumera.data.trakt.TraktScrobbleManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
@@ -47,6 +48,18 @@ class PlayerViewModel @Inject constructor(
     private val stremioLibrarySyncManager: StremioLibrarySyncManager,
     private val profileConfigurationManager: ProfileConfigurationManager
 ) : ViewModel() {
+
+    // Where saves and scrobbles run; tests swap in a virtual-time dispatcher.
+    internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+
+    /**
+     * Runs [block] off the main thread, detached from [viewModelScope]'s cancellation. This
+     * ViewModel belongs to the player entry and is cleared the moment the player leaves the
+     * back stack, which is exactly when the final progress save and scrobble are sent.
+     */
+    private fun launchDetached(block: suspend () -> Unit) {
+        viewModelScope.launch(ioDispatcher + NonCancellable) { block() }
+    }
 
     val watchedThreshold: StateFlow<Double> = profileConfigurationManager.activeProfileId
         .flatMapLatest { profileId ->
@@ -107,7 +120,7 @@ class PlayerViewModel @Inject constructor(
         seriesId: String? = null
     ) {
         val ownerProfileId = profileConfigurationManager.activeProfileId.value ?: return
-        viewModelScope.launch(Dispatchers.IO + NonCancellable) {
+        launchDetached {
             val saved = persistProgressForProfile(
                 ownerProfileId = ownerProfileId,
                 id = id,
@@ -178,14 +191,14 @@ class PlayerViewModel @Inject constructor(
 
     fun scrobbleStart(id: String, type: String, positionMs: Long, durationMs: Long) {
         if (classifyDuration(type, durationMs) != PlaybackDurationStatus.NORMAL) return
-        viewModelScope.launch(Dispatchers.IO) {
+        launchDetached {
             traktScrobbleManager.scrobbleStart(id, type, positionMs, durationMs)
         }
     }
 
     fun scrobblePause(id: String, type: String, positionMs: Long, durationMs: Long, force: Boolean = false) {
         if (classifyDuration(type, durationMs) != PlaybackDurationStatus.NORMAL) return
-        viewModelScope.launch(Dispatchers.IO) {
+        launchDetached {
             traktScrobbleManager.scrobblePause(id, type, positionMs, durationMs, force = force)
             wutchManager.onPlayback(id, positionMs, finished = false)
         }
@@ -193,7 +206,7 @@ class PlayerViewModel @Inject constructor(
 
     fun scrobbleStop(id: String, type: String, positionMs: Long, durationMs: Long) {
         if (classifyDuration(type, durationMs) != PlaybackDurationStatus.NORMAL) return
-        viewModelScope.launch(Dispatchers.IO + NonCancellable) {
+        launchDetached {
             traktScrobbleManager.scrobbleStop(id, type, positionMs, durationMs)
             wutchManager.onPlayback(id, positionMs, finished = isCompleted(positionMs, durationMs, type))
         }

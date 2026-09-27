@@ -72,16 +72,17 @@ import com.hereliesaz.illumera.ui.home.FocusPivotSpec
 fun CastDetailScreen(
     personId: Int,
     personName: String,
-    onBackPress: () -> Unit = {},
     onNavigateToDetails: (type: String, id: String) -> Unit = { _, _ -> },
-    viewModel: CastDetailViewModel = hiltViewModel()
+    viewModel: CastDetailViewModel = hiltViewModel<CastDetailViewModel, CastDetailViewModel.Factory>(
+        creationCallback = { it.create(personId) }
+    )
 ) {
     val uiState by viewModel.state.collectAsState()
     val bg = MaterialTheme.colorScheme.background
     val accentColor = MaterialTheme.colorScheme.primary
     val textColor = MaterialTheme.colorScheme.onBackground
 
-    androidx.activity.compose.BackHandler { onBackPress() }
+    // Back belongs to the app's back stack (NavDisplay pops this page).
 
     Box(modifier = Modifier.fillMaxSize().background(bg)) {
         when (val state = uiState) {

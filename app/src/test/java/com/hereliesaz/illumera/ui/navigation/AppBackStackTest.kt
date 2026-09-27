@@ -6,14 +6,17 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
@@ -22,6 +25,9 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -96,6 +102,51 @@ class AppBackStackTest {
     }
 
     @Test
+    fun castAndRecommendedDetailsAreFlatEntriesBackUnwindsThemInOrder() {
+        val s = stack(MainKey)
+        BackStackOps.openDetails(s, type = "movie", id = "A")
+        BackStackOps.openCast(s, personId = 7, name = "Actor")
+        BackStackOps.openDetails(s, type = "series", id = "B")
+        BackStackOps.openPlayer(s)
+        assertEquals(
+            listOf(MainKey, DetailsKey("movie", "A"), CastKey(7, "Actor"), DetailsKey("series", "B", instance = 1), PlayerKey),
+            s
+        )
+
+        // Leaving the player lands on the page that started it, not the first Details.
+        assertTrue(BackStackOps.returnFromPlayer(s))
+        assertEquals(DetailsKey("series", "B", instance = 1), s.last())
+        assertTrue(BackStackOps.pop(s))
+        assertEquals(CastKey(7, "Actor"), s.last())
+        assertTrue(BackStackOps.pop(s))
+        assertEquals(DetailsKey("movie", "A"), s.last())
+        assertTrue(BackStackOps.pop(s))
+        assertEquals(listOf<NavKey>(MainKey), s)
+    }
+
+    @Test
+    fun samePersonOrStudioTwiceOnOneStackStaysTwoEntries() {
+        val s = stack(MainKey)
+        BackStackOps.openDetails(s, type = "movie", id = "A")
+        BackStackOps.openCast(s, 7, "Actor")
+        BackStackOps.openStudio(s, 3, "company", "Studio", "movie")
+        BackStackOps.openDetails(s, type = "movie", id = "B")
+        BackStackOps.openCast(s, 7, "Actor")
+        BackStackOps.openStudio(s, 3, "company", "Studio", "movie")
+        assertEquals(s.size, s.toSet().size)
+    }
+
+    @Test
+    fun queueAdvanceCarriesTheAutoPlayIdInTheKey() {
+        val s = stack(MainKey)
+        BackStackOps.openDetails(s, type = "series", id = "tt3")
+        BackStackOps.openPlayer(s)
+        BackStackOps.queueAdvance(s, type = "series", id = "tt4", title = "Next", poster = "", queueAutoPlayId = "tt4:1:1")
+        assertEquals("tt4:1:1", (s.last() as DetailsKey).queueAutoPlayId)
+        assertNull((s[1] as DetailsKey).queueAutoPlayId)
+    }
+
+    @Test
     fun gridRestoredWithoutItemsPops() {
         val s = stack(MainKey, GridKey("Popular", "cfg"))
         assertFalse(BackStackOps.dropEmptyGrid(s, hasItems = true))
@@ -145,6 +196,9 @@ class AppBackStackTest {
             val s = restored!!
             BackStackOps.openGrid(s, "Popular", "cfg")
             BackStackOps.openDetails(s, type = "series", id = "tt9", addon = "https://addon", title = "T")
+            BackStackOps.openCast(s, 7, "Actor")
+            BackStackOps.openStudio(s, 3, "network", "Net", "series")
+            BackStackOps.openDetails(s, type = "series", id = "tt10", queueAutoPlayId = "tt10:1:1")
             BackStackOps.openPlayer(s)
         }
         val before = restored!!.toList()
@@ -155,10 +209,17 @@ class AppBackStackTest {
 
     // ---- NavDisplay, configured as in MainActivity ----
 
+    /** Stands in for DetailsViewModel: remembers the started queue auto-play id in its SavedStateHandle. */
+    class QueueAutoPlayVm(private val handle: SavedStateHandle) : ViewModel() {
+        val consumed = handle.getStateFlow<String?>("queueAutoPlayConsumed", null)
+        fun consume(id: String) { handle["queueAutoPlayConsumed"] = id }
+    }
+
     private lateinit var backStack: NavBackStack<NavKey>
-    private lateinit var nested: NavHostController
     private var nextToken = 0
-    private var detailsToken = -1
+    private val detailsTokens = mutableMapOf<DetailsKey, Int>()
+    private val detailsVms = mutableMapOf<DetailsKey, QueueAutoPlayVm>()
+    private val autoPlayStarts = mutableListOf<String>()
     private var playerBacks = 0
 
     private fun setUpDisplay(playerOwnsBack: Boolean) {
@@ -176,14 +237,22 @@ class AppBackStackTest {
                 predictivePopTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                 entryProvider = entryProvider {
                     entry<MainKey> { Text("main") }
-                    entry<DetailsKey> {
-                        detailsToken = rememberSaveable { ++nextToken }
-                        nested = rememberNavController()
-                        NavHost(nested, startDestination = "detail") {
-                            composable("detail") { Text("detail") }
-                            composable("cast") { Text("cast") }
+                    entry<DetailsKey> { key ->
+                        detailsTokens[key] = rememberSaveable { ++nextToken }
+                        // The entry's own ViewModelStore, as DetailsScreen's hiltViewModel() gets it.
+                        val vm = viewModel { QueueAutoPlayVm(createSavedStateHandle()) }
+                        detailsVms[key] = vm
+                        val consumed by vm.consumed.collectAsState()
+                        val pending = key.queueAutoPlayId?.takeIf { it != consumed }
+                        LaunchedEffect(pending) {
+                            val requested = pending ?: return@LaunchedEffect
+                            autoPlayStarts += requested
+                            vm.consume(requested)
                         }
+                        Text("details ${key.id}")
                     }
+                    entry<CastKey> { Text("cast ${it.personId}") }
+                    entry<StudioKey> { Text("studio ${it.entityId}") }
                     entry<PlayerKey> {
                         if (playerOwnsBack) BackHandler { playerBacks++ }
                         Text("player")
@@ -191,6 +260,11 @@ class AppBackStackTest {
                 }
             )
         }
+        compose.waitForIdle()
+    }
+
+    private fun onStack(change: (NavBackStack<NavKey>) -> Unit) {
+        compose.runOnUiThread { change(backStack) }
         compose.waitForIdle()
     }
 
@@ -208,8 +282,7 @@ class AppBackStackTest {
     @Test
     fun backFromDetailsPopsToMain() {
         setUpDisplay(playerOwnsBack = true)
-        compose.runOnUiThread { BackStackOps.openDetails(backStack, "movie", "tt1") }
-        compose.waitForIdle()
+        onStack { BackStackOps.openDetails(it, "movie", "tt1") }
         pressBack()
         assertEquals(listOf<NavKey>(MainKey), backStack.toList())
     }
@@ -217,12 +290,8 @@ class AppBackStackTest {
     @Test
     fun playerBackHandlerOwnsBackOverNavDisplay() {
         setUpDisplay(playerOwnsBack = true)
-        compose.runOnUiThread {
-            BackStackOps.openDetails(backStack, "movie", "tt1")
-        }
-        compose.waitForIdle()
-        compose.runOnUiThread { BackStackOps.openPlayer(backStack) }
-        compose.waitForIdle()
+        onStack { BackStackOps.openDetails(it, "movie", "tt1") }
+        onStack { BackStackOps.openPlayer(it) }
 
         pressBack()
         assertEquals(1, playerBacks)
@@ -230,28 +299,54 @@ class AppBackStackTest {
     }
 
     @Test
-    fun detailsNestedStackSurvivesThePlayer() {
+    fun mainDetailsCastDetailsPlayerBackUnwindsOnePageAtATime() {
         setUpDisplay(playerOwnsBack = true)
-        compose.runOnUiThread { BackStackOps.openDetails(backStack, "movie", "tt1") }
-        compose.waitForIdle()
-        compose.runOnUiThread { nested.navigate("cast") }
-        compose.waitForIdle()
-        val tokenBeforePlayer = detailsToken
+        onStack { BackStackOps.openDetails(it, "movie", "A") }
+        val detailsA = backStack.last() as DetailsKey
+        val tokenA = detailsTokens.getValue(detailsA)
+        val vmA = detailsVms.getValue(detailsA)
+        onStack { BackStackOps.openCast(it, 7, "Actor") }
+        onStack { BackStackOps.openDetails(it, "series", "B") }
+        val detailsB = backStack.last() as DetailsKey
+        val tokenB = detailsTokens.getValue(detailsB)
+        // Each Details page has its own ViewModel.
+        assertNotSame(vmA, detailsVms.getValue(detailsB))
 
-        compose.runOnUiThread { BackStackOps.openPlayer(backStack) }
-        compose.waitForIdle()
-        compose.runOnUiThread { BackStackOps.returnFromPlayer(backStack) }
-        compose.waitForIdle()
+        onStack { BackStackOps.openPlayer(it) }
+        // The session ends the player; the page that started it comes back as it was.
+        onStack { BackStackOps.returnFromPlayer(it) }
+        assertEquals(detailsB, backStack.last())
+        assertEquals(tokenB, detailsTokens.getValue(detailsB))
 
-        // The page comes back where the viewer left it, not rebuilt from its start.
-        assertEquals("cast", nested.currentBackStackEntry?.destination?.route)
-        assertEquals(tokenBeforePlayer, detailsToken)
-
-        // Back inside Details pops the nested page first, then the Details entry.
         pressBack()
-        assertEquals("detail", nested.currentBackStackEntry?.destination?.route)
-        assertTrue(backStack.last() is DetailsKey)
+        assertEquals(CastKey(7, "Actor"), backStack.last())
+        pressBack()
+        assertEquals(detailsA, backStack.last())
+        assertEquals(tokenA, detailsTokens.getValue(detailsA))
+        assertSame(vmA, detailsVms.getValue(detailsA))
         pressBack()
         assertEquals(listOf<NavKey>(MainKey), backStack.toList())
+    }
+
+    @Test
+    fun queueAutoPlayStartsOnceAndNotAgainOnReturnFromThePlayer() {
+        setUpDisplay(playerOwnsBack = true)
+        onStack { BackStackOps.openDetails(it, "series", "S") }
+        onStack { BackStackOps.openPlayer(it) }
+        onStack {
+            BackStackOps.queueAdvance(it, type = "series", id = "S2", title = "Next", poster = "", queueAutoPlayId = "S2:1:1")
+        }
+        assertEquals(listOf("S2:1:1"), autoPlayStarts)
+
+        // The advanced-to page starts playback; the viewer comes back to it.
+        onStack { BackStackOps.openPlayer(it) }
+        onStack { BackStackOps.returnFromPlayer(it) }
+        assertEquals(DetailsKey("series", "S2", title = "Next", queueAutoPlayId = "S2:1:1", instance = 1), backStack.last())
+        assertEquals(listOf("S2:1:1"), autoPlayStarts)
+
+        // Back to the previous show's page, which had nothing queued.
+        pressBack()
+        assertEquals(DetailsKey("series", "S"), backStack.last())
+        assertEquals(listOf("S2:1:1"), autoPlayStarts)
     }
 }

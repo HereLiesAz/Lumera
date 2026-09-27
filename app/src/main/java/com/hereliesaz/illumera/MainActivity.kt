@@ -34,11 +34,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,15 +77,18 @@ import com.hereliesaz.illumera.domain.DashboardTab
 import com.hereliesaz.illumera.domain.episodeDisplayTitle
 import com.hereliesaz.illumera.ui.navigation.AppBackStackConfiguration
 import com.hereliesaz.illumera.ui.navigation.BackStackOps
+import com.hereliesaz.illumera.ui.navigation.CastKey
 import com.hereliesaz.illumera.ui.navigation.DetailsKey
 import com.hereliesaz.illumera.ui.navigation.GridKey
 import com.hereliesaz.illumera.ui.navigation.MainKey
 import com.hereliesaz.illumera.ui.navigation.NavDestination
 import com.hereliesaz.illumera.ui.navigation.PlayerKey
+import com.hereliesaz.illumera.ui.navigation.StudioKey
 import com.hereliesaz.illumera.ui.navigation.NavDrawer
 import com.hereliesaz.illumera.ui.navigation.TopNavigationBar
 import com.hereliesaz.illumera.ui.player.PlayerScreen
 import com.hereliesaz.illumera.ui.playback.PlaybackNav
+import com.hereliesaz.illumera.ui.playback.PlaybackOrigin
 import com.hereliesaz.illumera.ui.playback.PlaybackSessionViewModel
 import com.hereliesaz.illumera.ui.playback.buildPlayerSourceOption
 import com.hereliesaz.illumera.ui.playback.toPlayerSubtitleSources
@@ -592,18 +590,14 @@ class MainActivity : ComponentActivity() {
             // The root back stack (Main, Grid, Details, Player), saved across process death.
             val backStack = rememberNavBackStack(AppBackStackConfiguration, MainKey)
             val topKey = backStack.lastOrNull()
-            var selectedMovieId by rememberSaveable { mutableStateOf("") }
-            var selectedMovieType by rememberSaveable { mutableStateOf("movie") }
             // Playback state lives in the activity-scoped session, so it outlives a
             // configuration change and TorrentService's callbacks always reach it.
             val session = hiltViewModel<PlaybackSessionViewModel>(viewModelStoreOwner = this@MainActivity)
-            var selectedMovieTitle by rememberSaveable { mutableStateOf("") }
-            var selectedMoviePoster by rememberSaveable { mutableStateOf("") }
-            var selectedMovieLogo by rememberSaveable { mutableStateOf("") }
-            var selectedAddonBaseUrl by rememberSaveable { mutableStateOf<String?>(null) }
-            var queueAutoPlayId by rememberSaveable { mutableStateOf<String?>(null) }
+            // A queue start stays pending while the viewer is on the advanced-to title's pages.
             LaunchedEffect(topKey) {
-                if (topKey !is DetailsKey && topKey != PlayerKey) session.queueStartPending = false
+                if (topKey !is DetailsKey && topKey !is CastKey && topKey !is StudioKey && topKey != PlayerKey) {
+                    session.queueStartPending = false
+                }
             }
 
             // Debrid library items (Watchlist's cloud storage section) are pre-resolved
@@ -626,24 +620,17 @@ class MainActivity : ComponentActivity() {
                             // Pops only the player: Back lands on Details, or on the menu area
                             // for debrid library playback started from Watchlist.
                             is PlaybackNav.ReturnFromPlayer -> BackStackOps.returnFromPlayer(backStack)
-                            is PlaybackNav.OpenDetails -> {
-                                selectedMovieId = event.movieId
-                                selectedMovieType = event.movieType
-                                selectedMovieTitle = event.title
-                                selectedMoviePoster = event.poster
-                                selectedMovieLogo = ""
-                                selectedAddonBaseUrl = null
+                            // On top of the stack: Back returns to the previous show's page, then
+                            // to the menu area as the viewer left it. The new page starts
+                            // queueAutoPlayId once.
+                            is PlaybackNav.OpenDetails -> BackStackOps.queueAdvance(
+                                backStack,
+                                type = event.movieType,
+                                id = event.movieId,
+                                title = event.title,
+                                poster = event.poster,
                                 queueAutoPlayId = event.queueAutoPlayId
-                                // On top of the stack: Back returns to the previous show's page,
-                                // then to the menu area as the viewer left it.
-                                BackStackOps.queueAdvance(
-                                    backStack,
-                                    type = event.movieType,
-                                    id = event.movieId,
-                                    title = event.title,
-                                    poster = event.poster
-                                )
-                            }
+                            )
                             is PlaybackNav.LaunchExternal -> launchExternalPlayer(this@MainActivity, event.url)
                             PlaybackNav.ShowPlayerChoice -> session.showPlayerChoiceDialog = true
                         }
@@ -814,13 +801,7 @@ class MainActivity : ComponentActivity() {
 
                         // Opens a title's Details from any main screen or the grid.
                         val openDetailsFor: (MetaItem) -> Unit = { movie ->
-                            selectedMovieId = movie.id
-                            selectedMovieType = movie.type
-                            selectedMovieTitle = movie.name
-                            selectedMoviePoster = movie.poster ?: ""
-                            selectedMovieLogo = movie.logo ?: ""
-                            selectedAddonBaseUrl = movie.addonBaseUrl
-                            session.detailsResumePlaybackHint = null
+                            session.clearResumeHint()
                             session.selectedPlaybackId = movie.id
                             session.selectedPlaybackType = movie.type
                             session.selectedPlaybackTitle = movie.name
@@ -1240,160 +1221,87 @@ class MainActivity : ComponentActivity() {
                             }
                             }
                             entry<DetailsKey> { detailsKey ->
-                            // Back to an older Details page (after a queue advance): the
-                            // selection follows the page on screen again.
-                            LaunchedEffect(detailsKey) {
-                                if (selectedMovieId != detailsKey.id || selectedMovieType != detailsKey.type) {
-                                    selectedMovieId = detailsKey.id
-                                    selectedMovieType = detailsKey.type
-                                    selectedAddonBaseUrl = detailsKey.addon
-                                    selectedMovieTitle = detailsKey.title
-                                    selectedMoviePoster = detailsKey.poster
-                                    selectedMovieLogo = detailsKey.logo
-                                }
+                            // Every Details page is its own entry with its own DetailsViewModel
+                            // (the entry's ViewModelStore). Cast, studio and recommended titles
+                            // are entries pushed on top of it; Back pops them one by one.
+                            var resolvedPoster by rememberSaveable { mutableStateOf(detailsKey.poster) }
+                            val openDetails: (String, String) -> Unit = { navType, navId ->
+                                BackStackOps.openDetails(backStack, type = navType, id = navId)
                             }
-
-                            // Remembered inside the entry, so its cast/studio/recommendation stack
-                            // is saved while the player is on top and comes back as it was.
-                            val detailsNavController = rememberNavController()
-                            val startRoute = "detail/${java.net.URLEncoder.encode(detailsKey.type, "UTF-8")}/${java.net.URLEncoder.encode(detailsKey.id, "UTF-8")}?addon=${java.net.URLEncoder.encode(detailsKey.addon ?: "", "UTF-8")}"
-
-                            // Opens the title's page the first time only; a restored stack is kept.
-                            LaunchedEffect(detailsKey) {
-                                val currentRoute = detailsNavController.currentBackStackEntry?.destination?.route
-                                if (currentRoute == null || currentRoute == "detail_start") {
-                                    detailsNavController.navigate(startRoute) {
-                                        popUpTo("detail_start") { inclusive = true }
-                                    }
+                            // What the player needs from this page: its show id (next-episode and
+                            // progress ids), title, art, and where the resume hint goes back to.
+                            fun origin(seriesTitle: String = "", logo: String = "") = PlaybackOrigin(
+                                ownerTag = detailsKey.playbackOwnerTag,
+                                showId = detailsKey.id,
+                                title = seriesTitle.ifBlank { detailsKey.title },
+                                poster = resolvedPoster,
+                                logo = logo.ifBlank { detailsKey.logo }
+                            )
+                            DetailsScreen(
+                                type = detailsKey.type,
+                                id = detailsKey.id,
+                                addonBaseUrl = detailsKey.addon,
+                                // A result for this page only: the hint the session leaves when a
+                                // playback this page started ends part-way. DetailsScreen still
+                                // ignores a hint for another title.
+                                resumePlaybackHint = session.resumeHintFor(detailsKey.playbackOwnerTag),
+                                autoSelectSource = currentProfile?.autoSelectSource ?: false,
+                                rememberSourceSelection = currentProfile?.rememberSourceSelection ?: true,
+                                onPosterResolved = { resolvedPoster = it },
+                                onPlayClick = { url, playbackId, playbackType, playbackTitle, seriesTitle, logo, stream, addonSubtitles, availableStreams, episodes ->
+                                    session.startFromDetails(
+                                        origin = origin(seriesTitle, logo),
+                                        url = url,
+                                        playbackId = playbackId,
+                                        playbackType = playbackType,
+                                        playbackTitle = playbackTitle.ifBlank { detailsKey.title },
+                                        stream = stream,
+                                        addonSubtitles = addonSubtitles,
+                                        availableStreams = availableStreams,
+                                        episodes = episodes,
+                                        playerPreference = currentProfile?.playerPreference,
+                                        persistProfileState = mainViewModel::persistActiveProfileState
+                                    )
+                                },
+                                onAddToQueue = { queueManager.add(it) },
+                                queueAutoPlayId = detailsKey.queueAutoPlayId,
+                                onNavigateToDetails = openDetails,
+                                onNavigateToCastDetail = { personId, personName ->
+                                    BackStackOps.openCast(backStack, personId, personName)
+                                },
+                                onNavigateToStudioDetail = { entityId, entityKind, entityName, sourceType ->
+                                    BackStackOps.openStudio(backStack, entityId, entityKind, entityName, sourceType)
+                                },
+                                isTrailerLoading = session.isTrailerLoading,
+                                onTrailerClick = { youtubeKey, trailerName ->
+                                    session.startTrailer(origin(), youtubeKey, trailerName, detailsKey.type)
                                 }
+                            )
                             }
-
-                            // Shared onPlayClick lambda for all detail screens
-                            val onPlayClick: (String, String, String, String, String, String, com.hereliesaz.illumera.data.model.stremio.Stream, List<com.hereliesaz.illumera.domain.AddonSubtitle>, List<com.hereliesaz.illumera.data.model.stremio.Stream>, List<com.hereliesaz.illumera.data.model.stremio.MetaVideo>) -> Unit = { url, playbackId, playbackType, playbackTitle, seriesTitle, logo, stream, addonSubtitles, availableStreams, episodes ->
-                                val resolvedPlaybackTitle = playbackTitle.ifBlank { selectedMovieTitle }
-                                val resolvedSeriesTitle = seriesTitle.ifBlank { selectedMovieTitle }
-                                val isSeriesPlayback = playbackType.equals("series", ignoreCase = true) ||
-                                    playbackType.equals("tv", ignoreCase = true)
-                                if (isSeriesPlayback && resolvedSeriesTitle.isNotBlank()) {
-                                    selectedMovieTitle = resolvedSeriesTitle
+                            entry<CastKey> { castKey ->
+                            com.hereliesaz.illumera.ui.cast.CastDetailScreen(
+                                personId = castKey.personId,
+                                personName = castKey.name,
+                                onNavigateToDetails = { navType, navId ->
+                                    BackStackOps.openDetails(backStack, type = navType, id = navId)
                                 }
-                                if (logo.isNotBlank()) selectedMovieLogo = logo
-                                session.startFromDetails(
-                                    url = url,
-                                    playbackId = playbackId,
-                                    playbackType = playbackType,
-                                    playbackTitle = resolvedPlaybackTitle,
-                                    poster = selectedMoviePoster,
-                                    stream = stream,
-                                    addonSubtitles = addonSubtitles,
-                                    availableStreams = availableStreams,
-                                    episodes = episodes,
-                                    playerPreference = currentProfile?.playerPreference,
-                                    persistProfileState = mainViewModel::persistActiveProfileState
-                                )
+                            )
                             }
-
-                            NavHost(
-                                navController = detailsNavController,
-                                startDestination = "detail_start",
-                            ) {
-                                composable("detail_start") { }
-                                composable(
-                                    "detail/{type}/{id}?addon={addon}",
-                                    arguments = listOf(
-                                        navArgument("type") { type = NavType.StringType },
-                                        navArgument("id") { type = NavType.StringType },
-                                        navArgument("addon") { type = NavType.StringType; defaultValue = "" }
-                                    )
-                                ) { backStackEntry ->
-                                    val detailType = java.net.URLDecoder.decode(backStackEntry.arguments?.getString("type") ?: "movie", "UTF-8")
-                                    val detailId = java.net.URLDecoder.decode(backStackEntry.arguments?.getString("id") ?: "", "UTF-8")
-                                    val detailAddon = backStackEntry.arguments?.getString("addon")?.takeIf { it.isNotEmpty() }
-
-                                    DetailsScreen(
-                                        type = detailType,
-                                        id = detailId,
-                                        addonBaseUrl = detailAddon,
-                                        // Live, not a route argument: the page stays on the stack
-                                        // under the player and must see the hint the session
-                                        // leaves when it ends. DetailsScreen ignores other titles' hints.
-                                        resumePlaybackHint = session.detailsResumePlaybackHint,
-                                        autoSelectSource = currentProfile?.autoSelectSource ?: false,
-                                        rememberSourceSelection = currentProfile?.rememberSourceSelection ?: true,
-                                        onPosterResolved = { selectedMoviePoster = it },
-                                        onPlayClick = onPlayClick,
-                                        onAddToQueue = { queueManager.add(it) },
-                                        queueAutoPlayId = queueAutoPlayId,
-                                        onQueueAutoPlayConsumed = { queueAutoPlayId = null },
-                                        onNavigateToDetails = { navType, navId ->
-                                            val route = "detail/${java.net.URLEncoder.encode(navType, "UTF-8")}/${java.net.URLEncoder.encode(navId, "UTF-8")}"
-                                            detailsNavController.navigate(route)
-                                        },
-                                        onNavigateToCastDetail = { castPersonId, castPersonName ->
-                                            val route = "cast_detail/$castPersonId/${java.net.URLEncoder.encode(castPersonName, "UTF-8")}"
-                                            detailsNavController.navigate(route)
-                                        },
-                                        onNavigateToStudioDetail = { entityId, entityKind, entityName, sourceType ->
-                                            val route = "studio_detail/$entityId/$entityKind/${java.net.URLEncoder.encode(entityName, "UTF-8")}/$sourceType"
-                                            detailsNavController.navigate(route)
-                                        },
-                                        isTrailerLoading = session.isTrailerLoading,
-                                        onTrailerClick = { youtubeKey, trailerName ->
-                                            session.startTrailer(youtubeKey, trailerName, selectedMovieType, selectedMoviePoster)
-                                        }
-                                    )
+                            entry<StudioKey> { studioKey ->
+                            com.hereliesaz.illumera.ui.studio.StudioDetailScreen(
+                                entityId = studioKey.entityId,
+                                entityKind = studioKey.kind,
+                                entityName = studioKey.name,
+                                sourceType = studioKey.sourceType,
+                                onNavigateToDetails = { navType, navId ->
+                                    BackStackOps.openDetails(backStack, type = navType, id = navId)
                                 }
-                                composable(
-                                    "cast_detail/{personId}/{personName}",
-                                    arguments = listOf(
-                                        navArgument("personId") { type = NavType.StringType },
-                                        navArgument("personName") { type = NavType.StringType }
-                                    )
-                                ) { backStackEntry ->
-                                    val castPersonId = (backStackEntry.arguments?.getString("personId") ?: "0").toIntOrNull() ?: 0
-                                    val castPersonName = java.net.URLDecoder.decode(backStackEntry.arguments?.getString("personName") ?: "", "UTF-8")
-
-                                    com.hereliesaz.illumera.ui.cast.CastDetailScreen(
-                                        personId = castPersonId,
-                                        personName = castPersonName,
-                                        onBackPress = { detailsNavController.popBackStack() },
-                                        onNavigateToDetails = { navType, navId ->
-                                            val route = "detail/${java.net.URLEncoder.encode(navType, "UTF-8")}/${java.net.URLEncoder.encode(navId, "UTF-8")}"
-                                            detailsNavController.navigate(route)
-                                        }
-                                    )
-                                }
-                                composable(
-                                    "studio_detail/{entityId}/{entityKind}/{entityName}/{sourceType}",
-                                    arguments = listOf(
-                                        navArgument("entityId") { type = NavType.StringType },
-                                        navArgument("entityKind") { type = NavType.StringType },
-                                        navArgument("entityName") { type = NavType.StringType },
-                                        navArgument("sourceType") { type = NavType.StringType }
-                                    )
-                                ) { backStackEntry ->
-                                    val studioEntityId = (backStackEntry.arguments?.getString("entityId") ?: "0").toIntOrNull() ?: 0
-                                    val studioEntityKind = backStackEntry.arguments?.getString("entityKind") ?: "company"
-                                    val studioEntityName = java.net.URLDecoder.decode(backStackEntry.arguments?.getString("entityName") ?: "", "UTF-8")
-                                    val studioSourceType = backStackEntry.arguments?.getString("sourceType") ?: "movie"
-
-                                    com.hereliesaz.illumera.ui.studio.StudioDetailScreen(
-                                        entityId = studioEntityId,
-                                        entityKind = studioEntityKind,
-                                        entityName = studioEntityName,
-                                        sourceType = studioSourceType,
-                                        onBackPress = { detailsNavController.popBackStack() },
-                                        onNavigateToDetails = { navType, navId ->
-                                            val route = "detail/${java.net.URLEncoder.encode(navType, "UTF-8")}/${java.net.URLEncoder.encode(navId, "UTF-8")}"
-                                            detailsNavController.navigate(route)
-                                        }
-                                    )
-                                }
-                            }
+                            )
                             }
                             entry<PlayerKey> {
-                            // PlayerViewModel stays on the activity for now, as before.
-                            CompositionLocalProvider(LocalViewModelStoreOwner provides this@MainActivity) {
+                            // PlayerViewModel belongs to this entry and is cleared with it; its
+                            // scrobbles and progress saves run NonCancellable, so leaving the
+                            // player never cuts them off. The session stays on the activity.
                             if (session.selectedVideoUrl.isNotBlank() && session.currentStream == null &&
                                 !session.selectedPlaybackId.startsWith("trailer_")
                             ) {
@@ -1433,8 +1341,8 @@ class MainActivity : ComponentActivity() {
                             val isSeries = session.isSeriesPlayback
                             val autoplayNext = session.autoplayNextEnabled(currentProfile?.autoplayNextEpisode == true)
                             val queueSingleEpisode = session.isQueueSingleEpisode
-                            val nextEpisode = remember(session.selectedPlaybackId, selectedMovieId, session.currentEpisodeList, isSeries, queueSingleEpisode) {
-                                session.nextEpisodeFor(selectedMovieId)
+                            val nextEpisode = remember(session.selectedPlaybackId, session.playbackSeriesId, session.currentEpisodeList, isSeries, queueSingleEpisode) {
+                                session.nextEpisode()
                             }
                             val nextEpisodeInfo = remember(nextEpisode) {
                                 nextEpisode?.let { ep ->
@@ -1474,18 +1382,20 @@ class MainActivity : ComponentActivity() {
                             PlayerScreen(
                                 videoUrl = session.selectedVideoUrl,
                                 trailerAudioUrl = session.selectedTrailerAudioUrl.takeIf { it.isNotBlank() },
-                                title = session.selectedPlaybackTitle.ifBlank { selectedMovieTitle },
-                                seriesTitle = selectedMovieTitle.takeIf {
+                                title = session.selectedPlaybackTitle.ifBlank { session.playbackSeriesTitle },
+                                seriesTitle = session.playbackSeriesTitle.takeIf {
                                     session.selectedPlaybackType.equals("series", ignoreCase = true)
                                 },
-                                logoUrl = selectedMovieLogo.takeIf { it.isNotBlank() },
+                                logoUrl = session.playbackLogo.takeIf { it.isNotBlank() },
                                 poster = session.selectedPlaybackPoster,
                                 movieId = session.selectedPlaybackId,
                                 mediaType = session.selectedPlaybackType,
-                                seriesId = selectedMovieId.takeIf {
-                                    session.selectedPlaybackType.equals("series", ignoreCase = true) ||
-                                        session.selectedPlaybackType.equals("tv", ignoreCase = true) ||
-                                        session.selectedPlaybackType.equals("episode", ignoreCase = true)
+                                seriesId = session.playbackSeriesId.takeIf {
+                                    it.isNotBlank() && (
+                                        session.selectedPlaybackType.equals("series", ignoreCase = true) ||
+                                            session.selectedPlaybackType.equals("tv", ignoreCase = true) ||
+                                            session.selectedPlaybackType.equals("episode", ignoreCase = true)
+                                        )
                                 },
                                 sources = playerSources,
                                 subtitles = playerSubtitles,
@@ -1516,14 +1426,14 @@ class MainActivity : ComponentActivity() {
                                 nextEpisodeInfo = if (nextEpisode != null) nextEpisodeInfo else null,
                                 onAutoplayNextEpisode = if (nextEpisode != null) {
                                     { playerCurrentSourceUrl ->
-                                        session.autoplayNextEpisode(selectedMovieId, nextEpisode, playerCurrentSourceUrl, currentProfile)
+                                        session.autoplayNextEpisode(nextEpisode, playerCurrentSourceUrl, currentProfile)
                                     }
                                 } else null,
                                 episodes = session.currentEpisodeList,
                                 currentPlaybackId = session.selectedPlaybackId,
                                 onEpisodeSelected = if (session.currentEpisodeList.isNotEmpty()) {
                                     { episode, playerCurrentSourceUrl ->
-                                        session.selectEpisode(selectedMovieId, episode, playerCurrentSourceUrl, currentProfile)
+                                        session.selectEpisode(episode, playerCurrentSourceUrl, currentProfile)
                                     }
                                 } else null,
                                 episodeSwitchSources = session.pendingEpisodeSwitch?.let { pending ->
@@ -1546,7 +1456,6 @@ class MainActivity : ComponentActivity() {
                                 onSuspectSource = { status -> session.onSuspectSource(status, currentProfile) },
                                 onBack = { sessionResult -> session.end(sessionResult, currentProfile) }
                             )
-                            }
                             }
                             }
                             }

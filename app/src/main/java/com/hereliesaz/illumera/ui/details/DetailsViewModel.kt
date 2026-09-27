@@ -1,6 +1,7 @@
 package com.hereliesaz.illumera.ui.details
 
 import android.util.Log
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hereliesaz.illumera.data.local.AddonDao
@@ -51,6 +52,7 @@ import javax.inject.Inject
 // How long a fetched stream list is served instantly (with a background refresh kicked off
 // alongside it) before a re-open of the sources sidebar has to wait on a fresh fetch again.
 private const val STREAMS_CACHE_TTL_MS = 3 * 60_000L
+private const val KEY_QUEUE_AUTOPLAY_CONSUMED = "queueAutoPlayConsumed"
 
 @HiltViewModel
 class DetailsViewModel @Inject constructor(
@@ -65,8 +67,20 @@ class DetailsViewModel @Inject constructor(
     private val tmdbService: TmdbService,
     private val tmdbMetadataService: TmdbMetadataService,
     private val traktSyncManager: TraktSyncManager,
-    private val wutchManager: WutchManager
+    private val wutchManager: WutchManager,
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    /**
+     * The queue auto-play id this page already started. Saved with the page's entry, so
+     * coming back to it (from the player, or after process death) doesn't start it again.
+     */
+    val consumedQueueAutoPlayId: StateFlow<String?> =
+        savedStateHandle.getStateFlow(KEY_QUEUE_AUTOPLAY_CONSUMED, null)
+
+    fun consumeQueueAutoPlay(id: String) {
+        savedStateHandle[KEY_QUEUE_AUTOPLAY_CONSUMED] = id
+    }
 
     /** Per-episode watch progress for the episodes sidebar. */
     data class EpisodeProgress(

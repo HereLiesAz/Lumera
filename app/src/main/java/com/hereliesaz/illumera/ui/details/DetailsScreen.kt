@@ -134,14 +134,14 @@ fun DetailsScreen(
     onPlayClick: (String, String, String, String, String, String, Stream, List<AddonSubtitle>, List<Stream>, List<MetaVideo>) -> Unit,
     onAddToQueue: (QueueItem) -> Unit = {},
     queueAutoPlayId: String? = null,
-    onQueueAutoPlayConsumed: () -> Unit = {},
     onNavigateToDetails: (type: String, id: String) -> Unit = { _, _ -> },
     onNavigateToCastDetail: (personId: Int, personName: String) -> Unit = { _, _ -> },
     onNavigateToStudioDetail: (entityId: Int, entityKind: String, entityName: String, sourceType: String) -> Unit = { _, _, _, _ -> },
     onPosterResolved: (poster: String) -> Unit = {},
     onTrailerClick: (youtubeKey: String, trailerName: String) -> Unit = { _, _ -> },
     isTrailerLoading: Boolean = false,
-    viewModel: DetailsViewModel = hiltViewModel(key = "details_${type}_${id}")
+    // Scoped to this page's back-stack entry: every Details page has its own.
+    viewModel: DetailsViewModel = hiltViewModel()
 ) {
     LaunchedEffect(type, id, addonBaseUrl) { viewModel.loadDetails(type, id, addonBaseUrl) }
     val context = LocalContext.current
@@ -277,7 +277,7 @@ fun DetailsScreen(
     LaunchedEffect(contentReady) {
         if (contentReady) {
             if (restoreRowKey != null) {
-                // Back navigation from Jetpack Nav: restore focus
+                // Back to this page (its entry kept the saveable state): restore focus
                 runCatching { restoreFocusRequester.requestFocus() }
                 restoreRowKey = null
                 restoreIndex = -1
@@ -526,8 +526,10 @@ fun DetailsScreen(
                 val firstEpisodeSeason = firstEpisode?.season?.takeIf { it > 0 } ?: 1
                 val firstEpisodeNumber = firstEpisode?.episode?.takeIf { it > 0 } ?: 1
 
-                LaunchedEffect(queueAutoPlayId, currentMovie.id) {
-                    val requested = queueAutoPlayId ?: return@LaunchedEffect
+                val consumedQueueAutoPlayId by viewModel.consumedQueueAutoPlayId.collectAsState()
+                val pendingQueueAutoPlayId = queueAutoPlayId?.takeIf { it != consumedQueueAutoPlayId }
+                LaunchedEffect(pendingQueueAutoPlayId, currentMovie.id) {
+                    val requested = pendingQueueAutoPlayId ?: return@LaunchedEffect
                     if (type == "series") {
                         val requestedEpisode = currentMovie.videos.orEmpty().firstOrNull { ep ->
                             requested == ep.id || requested.endsWith(":${ep.season}:${ep.episode}")
@@ -547,7 +549,7 @@ fun DetailsScreen(
                         pendingPlaybackTitle = currentMovie.name
                         viewModel.loadStreams(type, streamId, currentMovie.name, autoSelectSource = true, rememberSourceSelection = rememberSourceSelection)
                     }
-                    onQueueAutoPlayConsumed()
+                    viewModel.consumeQueueAutoPlay(requested)
                 }
 
                 // No onNavigateDown — Compose's default DOWN navigation

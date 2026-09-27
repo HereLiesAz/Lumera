@@ -126,6 +126,7 @@ class PlaybackSessionActionsTest {
             debridManager,
             youTubeExtractor = mockk(relaxed = true)
         ).apply {
+            playbackSeriesId = "tt1"
             selectedPlaybackId = "tt1:1:1"
             selectedPlaybackType = "series"
             selectedVideoUrl = watching.url!!
@@ -156,7 +157,7 @@ class PlaybackSessionActionsTest {
         every { sourceSelectionStore.findPreferredStream(nextId, any()) } returns other
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
 
         assertEquals("https://cdn/e2.mkv", vm.selectedVideoUrl)
@@ -175,7 +176,7 @@ class PlaybackSessionActionsTest {
         every { sourceSelectionStore.findPreferredStream(nextId, any()) } returns remembered
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
 
         assertEquals("https://cdn/remembered.mkv", vm.selectedVideoUrl)
@@ -189,7 +190,7 @@ class PlaybackSessionActionsTest {
         every { sourceSelectionStore.findPreferredStream(nextId, any()) } returns remembered
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile.copy(rememberSourceSelection = false))
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile.copy(rememberSourceSelection = false))
         runCurrent()
 
         assertEquals("https://cdn/first.mkv", vm.selectedVideoUrl)
@@ -202,7 +203,7 @@ class PlaybackSessionActionsTest {
         nextStreams(unplayable, magnet)
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
 
         // A torrent: the url waits for the service, which was started for the new episode.
@@ -217,7 +218,7 @@ class PlaybackSessionActionsTest {
         nextStreams(Stream(name = "A", url = "https://cdn/a.mkv"))
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, manualProfile.copy(autoSelectSource = true))
+        vm.autoplayNextEpisode(nextEpisode, null, manualProfile.copy(autoSelectSource = true))
         runCurrent()
 
         assertEquals("https://cdn/a.mkv", vm.selectedVideoUrl)
@@ -230,7 +231,7 @@ class PlaybackSessionActionsTest {
         nextStreams(a)
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, manualProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, manualProfile)
         // Loading placeholder straight away, the list once the sources arrive.
         assertNull(vm.pendingEpisodeSwitch!!.streams)
         runCurrent()
@@ -245,7 +246,7 @@ class PlaybackSessionActionsTest {
         nextStreams()
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
 
         val pending = vm.pendingEpisodeSwitch!!
@@ -261,7 +262,7 @@ class PlaybackSessionActionsTest {
         nextStreams(Stream(name = "A", url = "https://cdn/a.mkv"))
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
 
         verify { sourceSelectionStore.rememberSelection("tt1:1:1", watching) }
     }
@@ -271,7 +272,7 @@ class PlaybackSessionActionsTest {
         coEvery { addonRepository.getStreams("series", nextId, any(), any()) } coAnswers { awaitCancellation() }
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
         assertEquals("Next episode · finding sources for $nextTitle", vm.playbackStatus)
 
@@ -296,7 +297,7 @@ class PlaybackSessionActionsTest {
         nextStreams(a)
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
         assertEquals(nextId, vm.awaitingFirstFrameId)
 
@@ -315,7 +316,7 @@ class PlaybackSessionActionsTest {
         nextStreams(Stream(name = "A", url = "https://cdn/a.mkv"))
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
         vm.onFirstFrame()
         advanceTimeBy(AUTOPLAY_FIRST_FRAME_MS + AUTOPLAY_STALL_MS)
@@ -333,7 +334,7 @@ class PlaybackSessionActionsTest {
         val vm = session()
         events(vm)
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
         vm.end(PlayerSessionResult(1_000L, null, false, null, null, null), autoplayProfile)
         advanceTimeBy(AUTOPLAY_FIRST_FRAME_MS + AUTOPLAY_STALL_MS)
@@ -348,10 +349,10 @@ class PlaybackSessionActionsTest {
         nextStreams(Stream(name = "A", url = "https://cdn/a.mkv"))
         val vm = session()
 
-        vm.autoplayNextEpisode("tt1", nextEpisode, null, autoplayProfile)
+        vm.autoplayNextEpisode(nextEpisode, null, autoplayProfile)
         runCurrent()
         val generation = vm.episodeSwitchGeneration
-        vm.selectEpisode("tt1", MetaVideo(title = "Five", season = 1, episode = 5), null, manualProfile)
+        vm.selectEpisode(MetaVideo(title = "Five", season = 1, episode = 5), null, manualProfile)
         assertEquals(generation + 1, vm.episodeSwitchGeneration)
         advanceTimeBy(AUTOPLAY_FIRST_FRAME_MS + 1)
         runCurrent()
@@ -367,7 +368,7 @@ class PlaybackSessionActionsTest {
         coEvery { addonRepository.getStreams("series", nextId, any(), any()) } coAnswers { late.await() }
         val vm = session()
 
-        vm.selectEpisode("tt1", nextEpisode, null, manualProfile.copy(autoSelectSource = true))
+        vm.selectEpisode(nextEpisode, null, manualProfile.copy(autoSelectSource = true))
         runCurrent()
         val generation = vm.episodeSwitchGeneration
         vm.dismissEpisodeSwitch()
@@ -388,7 +389,7 @@ class PlaybackSessionActionsTest {
         val b = Stream(name = "B", url = "https://cdn/b.mkv")
         nextStreams(a, b)
         val vm = session()
-        vm.selectEpisode("tt1", nextEpisode, null, manualProfile)
+        vm.selectEpisode(nextEpisode, null, manualProfile)
         runCurrent()
 
         vm.pickEpisodeSwitchSource("https://cdn/b.mkv", manualProfile)
@@ -542,8 +543,9 @@ class PlaybackSessionActionsTest {
         val stream = Stream(name = "A", url = "https://cdn/movie.mkv")
 
         vm.startFromDetails(
+            origin = PlaybackOrigin("movie:tt9:0", "tt9", "Movie", "poster.jpg", ""),
             url = "https://cdn/movie.mkv", playbackId = "tt9", playbackType = "movie",
-            playbackTitle = "Movie", poster = "poster.jpg", stream = stream,
+            playbackTitle = "Movie", stream = stream,
             addonSubtitles = emptyList(), availableStreams = emptyList(), episodes = emptyList(),
             playerPreference = "ask", persistProfileState = { persisted = true }
         )
@@ -554,6 +556,51 @@ class PlaybackSessionActionsTest {
         assertEquals("tt9", vm.selectedPlaybackId)
         assertEquals(PendingSourceSelection("tt9", stream, listOf(stream)), vm.pendingSourceSelection)
         assertEquals(listOf<PlaybackNav>(PlaybackNav.ShowPlayerChoice), events)
+    }
+
+    @Test
+    fun `episode ids come from the Details page that started playback, not an earlier title`() = runTest(dispatcher) {
+        val vm = session()
+        val showA = listOf(MetaVideo(title = "A1", season = 1, episode = 1), MetaVideo(title = "A2", season = 1, episode = 2))
+        val showB = listOf(MetaVideo(title = "B1", season = 1, episode = 1), MetaVideo(title = "B2", season = 1, episode = 2))
+        // Title A was opened and played first; the viewer then reached show B (through a cast page).
+        vm.startFromDetails(
+            origin = PlaybackOrigin("series:ttA:0", "ttA", "Show A", "a.jpg", "a-logo"),
+            url = "https://cdn/a1.mkv", playbackId = "ttA:1:1", playbackType = "series", playbackTitle = "A1",
+            stream = Stream(url = "https://cdn/a1.mkv"), addonSubtitles = emptyList(),
+            availableStreams = emptyList(), episodes = showA, playerPreference = null, persistProfileState = {}
+        )
+        runCurrent()
+        val watchingB = Stream(name = "B", url = "https://cdn/b1.mkv")
+        vm.startFromDetails(
+            origin = PlaybackOrigin("series:ttB:2", "ttB", "Show B", "b.jpg", "b-logo"),
+            url = "https://cdn/b1.mkv", playbackId = "ttB:1:1", playbackType = "series", playbackTitle = "B1",
+            stream = watchingB, addonSubtitles = emptyList(),
+            availableStreams = emptyList(), episodes = showB, playerPreference = null, persistProfileState = {}
+        )
+        runCurrent()
+
+        assertEquals("ttB", vm.playbackSeriesId)
+        assertEquals("Show B", vm.playbackSeriesTitle)
+        assertEquals("b-logo", vm.playbackLogo)
+        assertEquals("b.jpg", vm.selectedPlaybackPoster)
+        val next = vm.nextEpisode()
+        assertEquals("B2", next?.title)
+
+        coEvery { addonRepository.getStreams("series", "ttB:1:2", any(), any()) } returns
+            listOf(Stream(name = "B2", url = "https://cdn/b2.mkv"))
+        vm.autoplayNextEpisode(next!!, null, autoplayProfile)
+        runCurrent()
+
+        coVerify { addonRepository.getStreams("series", "ttB:1:2", any(), any()) }
+        coVerify(exactly = 0) { addonRepository.getStreams(any(), match { it.startsWith("ttA") }, any(), any()) }
+        assertEquals("ttB:1:2", vm.selectedPlaybackId)
+        assertEquals("https://cdn/b2.mkv", vm.selectedVideoUrl)
+
+        // The resume hint goes back to show B's page only.
+        vm.end(PlayerSessionResult(10_000L, 100_000L, false, "https://cdn/b2.mkv", null, null), autoplayProfile)
+        assertEquals("ttB:1:2", vm.resumeHintFor("series:ttB:2"))
+        assertNull(vm.resumeHintFor("series:ttA:0"))
     }
 
     @Test
