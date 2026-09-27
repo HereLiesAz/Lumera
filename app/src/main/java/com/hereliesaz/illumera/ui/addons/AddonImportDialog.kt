@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hereliesaz.illumera.ui.util.rememberDialogWidth
+import com.hereliesaz.illumera.ui.components.buttonColors
 import androidx.compose.ui.window.Dialog
 import com.hereliesaz.illumera.data.model.StremioAddonItem
 import kotlinx.coroutines.delay
@@ -315,23 +316,14 @@ private fun SmallActionButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     
-    val bgColor = when {
-        !enabled -> Color.White.copy(0.03f)
-        isFocused -> Color.White.copy(0.15f)
-        else -> Color.White.copy(0.08f)
-    }
-    
-    val textColor = when {
-        !enabled -> Color.White.copy(0.3f)
-        isFocused -> Color.White
-        else -> Color.White.copy(0.7f)
-    }
-    
+    val colors = buttonColors(focused = isFocused, enabled = enabled)
+
     Box(
         modifier = modifier
             .height(40.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(bgColor)
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(6.dp))
             .then(if (enabled) Modifier.clickable(interactionSource = interactionSource, indication = null) { onClick() } else Modifier)
             .then(if (enabled) Modifier.focusable(interactionSource = interactionSource) else Modifier),
         contentAlignment = Alignment.Center
@@ -339,7 +331,7 @@ private fun SmallActionButton(
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = textColor
+            color = colors.content
         )
     }
 }

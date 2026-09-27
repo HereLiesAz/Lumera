@@ -9,6 +9,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import com.hereliesaz.illumera.ui.util.touchClick
+import com.hereliesaz.illumera.ui.components.buttonColors
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -1507,19 +1508,15 @@ fun VoidCompactActionButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f)
-    val accentColor = MaterialTheme.colorScheme.primary
+    val colors = buttonColors(focused = isFocused)
 
     Row(
         modifier = modifier
             .height(36.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White.copy(0.07f))
-            .border(
-                if (isFocused) 2.dp else 1.dp,
-                if (isFocused) accentColor else Color.White.copy(0.15f),
-                RoundedCornerShape(8.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
             .focusable(interactionSource = interactionSource)
             .padding(horizontal = 10.dp),
@@ -1529,13 +1526,13 @@ fun VoidCompactActionButton(
         Icon(
             Icons.Default.Add,
             contentDescription = null,
-            tint = accentColor,
+            tint = colors.content,
             modifier = Modifier.size(16.dp)
         )
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             label.uppercase(),
-            color = if (isFocused) accentColor else Color.White.copy(0.8f),
+            color = colors.content,
             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
             maxLines = 1,
             softWrap = false,

@@ -27,7 +27,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.RectangleShape
 import com.hereliesaz.illumera.ui.theme.LocalRoundCorners
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -65,6 +64,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import com.hereliesaz.illumera.ui.addons.VoidButton
 import com.hereliesaz.illumera.ui.home.DpadRepeatGate
 import com.hereliesaz.illumera.ui.home.FocusPivotSpec
 
@@ -101,9 +101,12 @@ fun CastDetailScreen(
                         color = textColor.copy(alpha = 0.7f)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { viewModel.retry() }) {
-                        Text("Retry")
-                    }
+                    VoidButton(
+                        text = "Retry",
+                        onClick = { viewModel.retry() },
+                        modifier = Modifier.width(120.dp),
+                        isPrimary = true
+                    )
                 }
             }
             is CastDetailState.Success -> {

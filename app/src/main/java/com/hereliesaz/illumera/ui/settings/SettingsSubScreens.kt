@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
 import com.hereliesaz.illumera.crash.CrashReporting
 import com.hereliesaz.illumera.ui.addons.VoidDialog
+import com.hereliesaz.illumera.ui.components.ButtonEmphasis
+import com.hereliesaz.illumera.ui.components.buttonColors
 import com.hereliesaz.illumera.ui.details.FilterDropdown
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.text.style.TextOverflow
@@ -2195,6 +2197,7 @@ fun AboutSettings(
         val checkScale by animateFloatAsState(if (isCheckFocused) 1.02f else 1f)
         val isChecking = updateState is UpdateState.Checking
         val isDownloading = updateState is UpdateState.Downloading
+        val checkColors = buttonColors(focused = isCheckFocused)
 
         Row(
             modifier = Modifier
@@ -2207,12 +2210,8 @@ fun AboutSettings(
                 }
                 .scale(checkScale)
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (isCheckFocused) accentColor.copy(0.15f) else Color.White.copy(0.05f))
-                .border(
-                    if (isCheckFocused) 1.dp else 0.dp,
-                    if (isCheckFocused) accentColor else Color.Transparent,
-                    RoundedCornerShape(8.dp)
-                )
+                .background(checkColors.container)
+                .border(checkColors.borderWidth, checkColors.border, RoundedCornerShape(8.dp))
                 .clickable(interactionSource = checkInteraction, indication = null) {
                     if (!isChecking && !isDownloading) {
                         scope.launch { updateManager.checkForUpdate() }
@@ -2230,7 +2229,7 @@ fun AboutSettings(
                     is UpdateState.Error -> (updateState as UpdateState.Error).message
                     else -> "Check for Updates"
                 },
-                color = if (isCheckFocused) Color.White else Color.White.copy(0.8f),
+                color = checkColors.content,
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium, fontSize = 15.sp)
             )
         }
@@ -2264,6 +2263,7 @@ fun AboutSettings(
             val dlInteraction = remember { MutableInteractionSource() }
             val isDlFocused by dlInteraction.collectIsFocusedAsState()
             val dlScale by animateFloatAsState(if (isDlFocused) 1.02f else 1f)
+            val dlColors = buttonColors(focused = isDlFocused, emphasis = ButtonEmphasis.Primary)
 
             Row(
                 modifier = Modifier
@@ -2271,12 +2271,8 @@ fun AboutSettings(
                     .height(48.dp)
                     .scale(dlScale)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isDlFocused) accentColor.copy(0.3f) else accentColor.copy(0.15f))
-                    .border(
-                        if (isDlFocused) 1.dp else 0.dp,
-                        if (isDlFocused) accentColor else Color.Transparent,
-                        RoundedCornerShape(8.dp)
-                    )
+                    .background(dlColors.container)
+                    .border(dlColors.borderWidth, dlColors.border, RoundedCornerShape(8.dp))
                     .clickable(interactionSource = dlInteraction, indication = null) {
                         scope.launch { updateManager.downloadAndInstall(info.apkUrl) }
                     }
@@ -2287,7 +2283,7 @@ fun AboutSettings(
             ) {
                 Text(
                     "Download & Install",
-                    color = Color.White,
+                    color = dlColors.content,
                     style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                 )
             }
@@ -2332,18 +2328,15 @@ fun AboutSettings(
             val retryInteraction = remember { MutableInteractionSource() }
             val isRetryFocused by retryInteraction.collectIsFocusedAsState()
             val retryScale by animateFloatAsState(if (isRetryFocused) 1.02f else 1f)
+            val retryColors = buttonColors(focused = isRetryFocused, emphasis = ButtonEmphasis.Primary)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
                     .scale(retryScale)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isRetryFocused) accentColor.copy(0.3f) else accentColor.copy(0.15f))
-                    .border(
-                        if (isRetryFocused) 1.dp else 0.dp,
-                        if (isRetryFocused) accentColor else Color.Transparent,
-                        RoundedCornerShape(8.dp)
-                    )
+                    .background(retryColors.container)
+                    .border(retryColors.borderWidth, retryColors.border, RoundedCornerShape(8.dp))
                     .clickable(interactionSource = retryInteraction, indication = null) {
                         updateManager.retryInstall()
                     }
@@ -2354,7 +2347,7 @@ fun AboutSettings(
             ) {
                 Text(
                     "Install Now",
-                    color = Color.White,
+                    color = retryColors.content,
                     style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                 )
             }

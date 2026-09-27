@@ -42,6 +42,7 @@ import com.hereliesaz.illumera.data.model.ProfileEntity
 import com.hereliesaz.illumera.data.model.ThemeEntity
 import com.hereliesaz.illumera.ui.addons.VoidButton
 import com.hereliesaz.illumera.ui.addons.VoidDialog
+import com.hereliesaz.illumera.ui.components.buttonColors
 import com.hereliesaz.illumera.ui.theme.ThemeManager
 import kotlinx.coroutines.delay
 
@@ -319,7 +320,7 @@ private fun ThemeAddButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.02f else 1f)
-    val accentColor = MaterialTheme.colorScheme.primary
+    val colors = buttonColors(focused = isFocused)
 
     Row(
         modifier = modifier
@@ -327,22 +328,18 @@ private fun ThemeAddButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
             .height(50.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White.copy(0.05f))
-            .border(
-                if (isFocused) 2.dp else 1.dp,
-                if (isFocused) accentColor else Color.White.copy(0.2f),
-                RoundedCornerShape(8.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
             .focusable(interactionSource = interactionSource),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.Add, contentDescription = null, tint = accentColor)
+        Icon(Icons.Default.Add, contentDescription = null, tint = colors.content)
         Spacer(modifier = Modifier.width(8.dp))
         Text(
             "Create Custom Theme",
-            color = if (isFocused) accentColor else Color.White.copy(0.8f),
+            color = colors.content,
             style = MaterialTheme.typography.labelLarge
         )
     }

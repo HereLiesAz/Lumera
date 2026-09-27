@@ -54,6 +54,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import com.hereliesaz.illumera.ui.util.rememberDialogWidth
+import com.hereliesaz.illumera.ui.components.ButtonEmphasis
+import com.hereliesaz.illumera.ui.components.buttonColors
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1968,35 +1970,23 @@ private fun IntegrationButton(
 
     val scale by animateFloatAsState(if (isFocused && enabled) 1.05f else 1f)
 
-    val activeColor = when {
-        isDestructive -> Color.Red
-        else -> MaterialTheme.colorScheme.primary
-    }
-
-    val bgColor = if (!enabled) Color.White.copy(0.05f) else Color.White.copy(0.08f)
-
-    // Unfocused is always plain white/dimmed — isDestructive/isPrimary only color the
-    // button once it's actually the one focused, so which action needs a deliberate
-    // move to reach is never ambiguous.
-    val textColor = when {
-        !enabled -> Color.White.copy(0.3f)
-        isFocused -> activeColor
-        else -> Color.White
-    }
-
-    val borderColor = when {
-        !enabled -> Color.White.copy(0.1f)
-        isFocused -> activeColor
-        else -> Color.White.copy(0.2f)
-    }
+    val colors = buttonColors(
+        focused = isFocused,
+        emphasis = when {
+            isDestructive -> ButtonEmphasis.Destructive
+            isPrimary -> ButtonEmphasis.Primary
+            else -> ButtonEmphasis.Normal
+        },
+        enabled = enabled
+    )
 
     Box(
         modifier = modifier
             .height(50.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .then(if (enabled) Modifier.clickable(interactionSource = interactionSource, indication = null) { onClick() } else Modifier)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(if (enabled) Modifier.focusable(interactionSource = interactionSource) else Modifier),
@@ -2005,7 +1995,7 @@ private fun IntegrationButton(
         Text(
             text = text.uppercase(),
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-            color = textColor
+            color = colors.content
         )
     }
 }
