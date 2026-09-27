@@ -36,6 +36,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hereliesaz.illumera.data.model.ThemeEntity
+import com.hereliesaz.illumera.ui.components.ButtonEmphasis
+import com.hereliesaz.illumera.ui.components.buttonColors
 import com.hereliesaz.illumera.ui.theme.DefaultThemes
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -695,15 +697,10 @@ private fun EditorButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f)
-    val accentColor = MaterialTheme.colorScheme.primary
-    
-    val bgColor = Color.White.copy(0.08f)
-    
-    val borderColor = when {
-        isFocused -> accentColor
-        isPrimary -> accentColor.copy(0.75f)
-        else -> Color.White.copy(0.2f)
-    }
+    val colors = buttonColors(
+        focused = isFocused,
+        emphasis = if (isPrimary) ButtonEmphasis.Primary else ButtonEmphasis.Normal
+    )
 
     Box(
         contentAlignment = Alignment.Center,
@@ -711,19 +708,15 @@ private fun EditorButton(
             .scale(scale)
             .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .border(2.dp, borderColor, RoundedCornerShape(8.dp))
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
             .focusable(interactionSource = interactionSource)
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-            color = when {
-                isFocused -> accentColor
-                isPrimary -> accentColor.copy(alpha = 0.95f)
-                else -> Color.White
-            }
+            color = colors.content
         )
     }
 }

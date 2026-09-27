@@ -45,6 +45,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.hereliesaz.illumera.ui.components.ButtonEmphasis
+import com.hereliesaz.illumera.ui.components.buttonColors
 import com.hereliesaz.illumera.ui.util.rememberDialogWidth
 
 @Composable
@@ -106,32 +108,23 @@ fun VoidButton(
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused && enabled) 1.05f else 1f, label = "VoidButtonScale")
 
-    val activeColor = if (isDestructive) Color.Red else MaterialTheme.colorScheme.primary
-    val bgColor = when {
-        !enabled -> Color.White.copy(alpha = 0.05f)
-        isPrimary -> activeColor.copy(alpha = 0.25f)
-        else -> Color.White.copy(alpha = 0.08f)
-    }
-    val textColor = when {
-        !enabled -> Color.White.copy(alpha = 0.3f)
-        isPrimary -> activeColor
-        isFocused -> activeColor
-        else -> Color.White
-    }
-    val borderColor = when {
-        !enabled -> Color.White.copy(alpha = 0.1f)
-        isPrimary -> activeColor.copy(alpha = 0.6f)
-        isFocused -> activeColor
-        else -> Color.White.copy(alpha = 0.2f)
-    }
+    val colors = buttonColors(
+        focused = isFocused,
+        emphasis = when {
+            isDestructive -> ButtonEmphasis.Destructive
+            isPrimary -> ButtonEmphasis.Primary
+            else -> ButtonEmphasis.Normal
+        },
+        enabled = enabled
+    )
 
     Box(
         modifier = modifier
             .height(50.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .then(
                 if (enabled) {
                     Modifier.clickable(interactionSource = interactionSource, indication = null) { onClick() }
@@ -146,7 +139,7 @@ fun VoidButton(
         Text(
             text = text.uppercase(),
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-            color = textColor
+            color = colors.content
         )
     }
 }
@@ -220,29 +213,41 @@ fun VoidIconButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    isActive: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val scale by animateFloatAsState(if (isFocused) 1.1f else 1f, label = "VoidIconButtonScale")
-    val bgColor = if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.1f)
-    val iconColor = if (isFocused) Color.Black else Color.White
+    val scale by animateFloatAsState(if (isFocused && enabled) 1.1f else 1f, label = "VoidIconButtonScale")
+    val colors = buttonColors(
+        focused = isFocused,
+        emphasis = if (isActive) ButtonEmphasis.Primary else ButtonEmphasis.Normal,
+        enabled = enabled
+    )
 
     Box(
         modifier = modifier
             .size(50.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .border(1.dp, if (isFocused) Color.Transparent else Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-            .clickable(interactionSource = interactionSource, indication = null) { onClick() }
-            .focusable(interactionSource = interactionSource),
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
+            .then(
+                if (enabled) {
+                    Modifier
+                        .clickable(interactionSource = interactionSource, indication = null) { onClick() }
+                        .focusable(interactionSource = interactionSource)
+                } else {
+                    Modifier
+                }
+            ),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = iconColor,
+            tint = colors.content,
             modifier = Modifier.size(24.dp)
         )
     }

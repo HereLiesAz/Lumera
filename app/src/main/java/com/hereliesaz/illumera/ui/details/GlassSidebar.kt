@@ -10,6 +10,9 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -39,6 +42,8 @@ import com.hereliesaz.illumera.ui.home.DpadRepeatGate
 import com.hereliesaz.illumera.ui.components.MediaActionTarget
 import com.hereliesaz.illumera.ui.components.MediaCardActionMenu
 import com.hereliesaz.illumera.ui.util.touchClick
+import com.hereliesaz.illumera.ui.components.ButtonEmphasis
+import com.hereliesaz.illumera.ui.components.buttonColors
 import com.hereliesaz.illumera.data.model.stremio.MetaVideo
 import com.hereliesaz.illumera.data.model.stremio.Stream
 import com.hereliesaz.illumera.data.tmdb.TmdbEpisodeEnrichment
@@ -543,11 +548,12 @@ fun FilterDropdown(currentValue: String, options: List<String>, modifier: Modifi
     val density = LocalDensity.current
 
     val primary = MaterialTheme.colorScheme.primary
+    val colors = buttonColors(focused = isFocused)
 
     Box(modifier) {
         Button(
             onClick = { expanded = true },
-            colors = ButtonDefaults.buttonColors(containerColor = if (isFocused) Color.White.copy(0.1f) else Color.White.copy(0.05f)),
+            colors = ButtonDefaults.buttonColors(containerColor = colors.container, contentColor = colors.content),
             modifier = Modifier
                 .fillMaxWidth()
                 .onFocusChanged { isFocused = it.isFocused }
@@ -555,11 +561,11 @@ fun FilterDropdown(currentValue: String, options: List<String>, modifier: Modifi
                     // Capture width of the button to apply to dropdown
                     rowWidth = with(density) { it.width.toDp() }
                 }
-                .border(if (isFocused) 2.dp else 0.dp, if (isFocused) primary else Color.Transparent, RoundedCornerShape(8.dp)),
+                .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp)),
             shape = RoundedCornerShape(8.dp)
         ) {
-            Text(currentValue, color = if(isFocused) Color.White else Color.LightGray, modifier = Modifier.weight(1f))
-            Icon(Icons.Default.ArrowDropDown, null, tint = if(isFocused) primary else Color.Gray)
+            Text(currentValue, color = colors.content, modifier = Modifier.weight(1f))
+            Icon(Icons.Default.ArrowDropDown, null, tint = colors.content)
         }
 
         // HACK: DropdownMenu in standard M3 doesn't support 'containerColor' param easily.
@@ -867,14 +873,22 @@ fun EpisodeItem(
                 modifier = Modifier.align(Alignment.TopEnd),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                IconButton(
-                    onClick = onQueue,
+                val queueInteraction = remember { MutableInteractionSource() }
+                val queueFocused by queueInteraction.collectIsFocusedAsState()
+                val queueColors = buttonColors(focused = queueFocused)
+                Box(
                     modifier = Modifier
                         .size(28.dp)
                         .focusRequester(queueRequester)
                         .focusProperties { left = thumbnailRequester; right = buttonRequester }
+                        .clip(CircleShape)
+                        .background(queueColors.container)
+                        .border(queueColors.borderWidth, queueColors.border, CircleShape)
+                        .clickable(interactionSource = queueInteraction, indication = null) { onQueue() }
+                        .focusable(interactionSource = queueInteraction),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add episode to queue", tint = Color.White)
+                    Icon(Icons.Default.Add, contentDescription = "Add episode to queue", tint = queueColors.content)
                 }
                 WatchedToggleButton(
                     isWatched = isWatched,
@@ -899,8 +913,6 @@ private fun WatchedToggleButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val primary = MaterialTheme.colorScheme.primary
-
     val targetWidth = if (isFocused) if (isWatched) 100.dp else 138.dp else 24.dp
     val animatedWidth by animateDpAsState(
         targetValue = targetWidth,
@@ -908,30 +920,18 @@ private fun WatchedToggleButton(
         label = "watchedBtnWidth"
     )
 
-    val bgColor = when {
-        isWatched && isFocused -> primary.copy(0.2f)
-        isWatched -> primary.copy(0.1f)
-        isFocused -> Color.White.copy(0.15f)
-        else -> Color.White.copy(0.08f)
-    }
-    val borderColor = when {
-        isFocused -> primary
-        isWatched -> primary.copy(0.4f)
-        else -> Color.White.copy(0.15f)
-    }
-    val iconColor = when {
-        isWatched -> primary
-        isFocused -> Color.White
-        else -> Color.White.copy(0.5f)
-    }
+    val colors = buttonColors(
+        focused = isFocused,
+        emphasis = if (isWatched) ButtonEmphasis.Primary else ButtonEmphasis.Normal
+    )
 
     Row(
         modifier = modifier
             .width(animatedWidth)
             .height(24.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(bgColor)
-            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(12.dp))
             .focusRequester(focusRequester)
             .focusProperties { left = thumbnailRequester; right = FocusRequester.Cancel }
             .onPreviewKeyEvent { event ->
@@ -950,7 +950,7 @@ private fun WatchedToggleButton(
     ) {
         Text(
             if (isWatched) "✓" else "+",
-            color = iconColor,
+            color = colors.content,
             style = MaterialTheme.typography.labelMedium
         )
 
@@ -958,7 +958,7 @@ private fun WatchedToggleButton(
             Spacer(Modifier.width(4.dp))
             Text(
                 if (isWatched) "Watched" else "Mark as watched",
-                color = if (isWatched) primary else Color.White,
+                color = colors.content,
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1
             )

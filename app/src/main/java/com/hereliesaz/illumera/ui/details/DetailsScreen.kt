@@ -1,7 +1,6 @@
 package com.hereliesaz.illumera.ui.details
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -33,6 +32,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.RectangleShape
 import com.hereliesaz.illumera.ui.theme.LocalRoundCorners
+import com.hereliesaz.illumera.ui.components.ButtonEmphasis
+import com.hereliesaz.illumera.ui.components.buttonColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Videocam
@@ -1104,7 +1105,6 @@ private fun ExpandableIconButton(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val accentColor = MaterialTheme.colorScheme.primary
 
     val showText = isFocused
 
@@ -1131,33 +1131,9 @@ private fun ExpandableIconButton(
         label = "textOffset"
     )
 
-    // Icon and border colors
-    val iconColor by animateColorAsState(
-        targetValue = when {
-            isFocused -> accentColor
-            isActive -> accentColor
-            else -> Color.White.copy(alpha = 0.7f)
-        },
-        animationSpec = tween(200),
-        label = "iconColor"
-    )
-    val borderColor by animateColorAsState(
-        targetValue = when {
-            isFocused -> accentColor
-            isActive -> accentColor.copy(alpha = 0.5f)
-            else -> Color.White.copy(alpha = 0.15f)
-        },
-        animationSpec = tween(200),
-        label = "borderColor"
-    )
-    val bgColor by animateColorAsState(
-        targetValue = when {
-            isFocused -> accentColor.copy(alpha = 0.15f)
-            isActive -> accentColor.copy(alpha = 0.08f)
-            else -> Color.White.copy(alpha = 0.07f)
-        },
-        animationSpec = tween(200),
-        label = "bgColor"
+    val colors = buttonColors(
+        focused = isFocused,
+        emphasis = if (isActive) ButtonEmphasis.Primary else ButtonEmphasis.Normal
     )
 
     val scale by animateFloatAsState(
@@ -1171,12 +1147,8 @@ private fun ExpandableIconButton(
             .height(42.dp)
             .scale(scale)
             .clip(RoundedCornerShape(21.dp))
-            .background(bgColor)
-            .border(
-                width = if (isFocused) 2.dp else 1.dp,
-                color = borderColor,
-                shape = RoundedCornerShape(21.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(21.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
             .focusable(interactionSource = interactionSource)
             .padding(start = 12.dp, end = 12.dp),
@@ -1186,7 +1158,7 @@ private fun ExpandableIconButton(
         Icon(
             icon,
             contentDescription = label,
-            tint = iconColor,
+            tint = colors.content,
             modifier = Modifier.size(18.dp)
         )
 
@@ -1194,7 +1166,7 @@ private fun ExpandableIconButton(
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = label.uppercase(),
-                color = accentColor,
+                color = colors.content,
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                 maxLines = 1,
                 softWrap = false,
@@ -1218,19 +1190,18 @@ private fun DialogButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f, label = "dlgBtnScale")
-    val activeColor = if (isDestructive) Color.Red else MaterialTheme.colorScheme.primary
+    val colors = buttonColors(
+        focused = isFocused,
+        emphasis = if (isDestructive) ButtonEmphasis.Destructive else ButtonEmphasis.Normal
+    )
 
     Box(
         modifier = modifier
             .height(50.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White.copy(0.08f))
-            .border(
-                1.dp,
-                if (isFocused) activeColor else Color.White.copy(0.2f),
-                RoundedCornerShape(8.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
             .focusable(interactionSource = interactionSource),
         contentAlignment = Alignment.Center
@@ -1238,10 +1209,7 @@ private fun DialogButton(
         Text(
             text = text.uppercase(),
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-            // Unfocused is always plain white — isDestructive only colors the button once
-            // it's actually the one focused, so which action needs a deliberate move to
-            // reach is never ambiguous.
-            color = if (isFocused) activeColor else Color.White
+            color = colors.content
         )
     }
 }

@@ -1,6 +1,7 @@
 package com.hereliesaz.illumera.ui.queue
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,11 +30,11 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,7 +64,9 @@ import androidx.lifecycle.ViewModel
 import com.hereliesaz.illumera.data.queue.QueueItem
 import com.hereliesaz.illumera.data.queue.QueueManager
 import com.hereliesaz.illumera.data.queue.QueueSuggestionSource
+import com.hereliesaz.illumera.ui.addons.VoidIconButton
 import com.hereliesaz.illumera.ui.components.LumeraCard
+import com.hereliesaz.illumera.ui.components.buttonColors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -227,13 +230,25 @@ fun QueueSection(
                 }
             )
 
+            val refreshEnabled = state.preferences.enabled && !state.isRefreshingSuggestions
+            val refreshInteraction = remember { MutableInteractionSource() }
+            val refreshFocused by refreshInteraction.collectIsFocusedAsState()
+            val refreshColors = buttonColors(focused = refreshFocused, enabled = refreshEnabled)
             Button(
                 onClick = { scope.launch { queueManager.refreshSuggestions(resetDismissed = true) } },
-                enabled = state.preferences.enabled && !state.isRefreshingSuggestions,
+                enabled = refreshEnabled,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = refreshColors.container,
+                    contentColor = refreshColors.content,
+                    disabledContainerColor = refreshColors.container,
+                    disabledContentColor = refreshColors.content
+                ),
+                border = BorderStroke(refreshColors.borderWidth, refreshColors.border),
+                interactionSource = refreshInteraction,
                 modifier = Modifier.padding(start = 8.dp, top = 6.dp)
             ) {
-                Icon(Icons.Default.Refresh, contentDescription = null)
-                Text(if (state.isRefreshingSuggestions) " Refreshing…" else " Refresh suggestions")
+                Icon(Icons.Default.Refresh, contentDescription = null, tint = refreshColors.content)
+                Text(if (state.isRefreshingSuggestions) " Refreshing…" else " Refresh suggestions", color = refreshColors.content)
             }
         }
 
@@ -252,21 +267,23 @@ fun QueueSection(
                 focusedKey = focusedQueueKey,
                 onFocused = onQueueFocused,
                 actions = { item, index ->
-                    IconButton(
+                    VoidIconButton(
+                        icon = Icons.Default.ArrowUpward,
+                        contentDescription = "Move up",
                         onClick = { queueManager.move(item.stableKey, -1) },
                         enabled = index > 0
-                    ) {
-                        Icon(Icons.Default.ArrowUpward, contentDescription = "Move up")
-                    }
-                    IconButton(
+                    )
+                    VoidIconButton(
+                        icon = Icons.Default.ArrowDownward,
+                        contentDescription = "Move down",
                         onClick = { queueManager.move(item.stableKey, 1) },
                         enabled = index < state.manualItems.lastIndex
-                    ) {
-                        Icon(Icons.Default.ArrowDownward, contentDescription = "Move down")
-                    }
-                    IconButton(onClick = { queueManager.remove(item.stableKey) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Remove")
-                    }
+                    )
+                    VoidIconButton(
+                        icon = Icons.Default.Delete,
+                        contentDescription = "Remove",
+                        onClick = { queueManager.remove(item.stableKey) }
+                    )
                 }
             )
         }
@@ -289,34 +306,24 @@ fun QueueSection(
                     }
                 },
                 actions = { item, _ ->
-                    IconButton(onClick = {
-                        scope.launch {
-                            queueManager.rateSuggestion(item.stableKey, -1)
-                            queueManager.removeSuggestion(item.stableKey)
-                            queueManager.ensureSuggestions()
-                        }
-                    }) {
-                        Icon(
-                            Icons.Default.ThumbDown,
-                            contentDescription = "Less like this",
-                            tint = if (item.rating < 0) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
+                    VoidIconButton(
+                        icon = Icons.Default.ThumbDown,
+                        contentDescription = "Less like this",
+                        onClick = {
+                            scope.launch {
+                                queueManager.rateSuggestion(item.stableKey, -1)
+                                queueManager.removeSuggestion(item.stableKey)
+                                queueManager.ensureSuggestions()
                             }
-                        )
-                    }
-                    IconButton(onClick = { queueManager.rateSuggestion(item.stableKey, 1) }) {
-                        Icon(
-                            Icons.Default.ThumbUp,
-                            contentDescription = "More like this",
-                            tint = if (item.rating > 0) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            }
-                        )
-                    }
+                        },
+                        isActive = item.rating < 0
+                    )
+                    VoidIconButton(
+                        icon = Icons.Default.ThumbUp,
+                        contentDescription = "More like this",
+                        onClick = { queueManager.rateSuggestion(item.stableKey, 1) },
+                        isActive = item.rating > 0
+                    )
                 }
             )
         }

@@ -14,6 +14,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -102,6 +103,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.Border
 import androidx.tv.material3.Icon
 import androidx.tv.material3.IconButton
 import androidx.tv.material3.IconButtonDefaults
@@ -114,6 +116,7 @@ import com.hereliesaz.illumera.ui.details.GlassSidebar
 import com.hereliesaz.illumera.ui.details.GlassSidebarScaffold
 import com.hereliesaz.illumera.ui.details.SidebarState
 import com.hereliesaz.illumera.ui.util.touchClick
+import com.hereliesaz.illumera.ui.components.buttonColors
 import java.text.Collator
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -1229,7 +1232,7 @@ private fun NextEpisodeButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f, label = "nextEpScale")
-    val accentColor = MaterialTheme.colorScheme.primary
+    val colors = buttonColors(focused = isFocused)
 
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
@@ -1244,12 +1247,8 @@ private fun NextEpisodeButton(
                 .height(40.dp)
                 .scale(scale)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color.White.copy(0.07f))
-                .border(
-                    if (isFocused) 2.dp else 1.dp,
-                    if (isFocused) accentColor else Color.White.copy(0.15f),
-                    RoundedCornerShape(8.dp)
-                )
+                .background(colors.container)
+                .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
                 .clickable(interactionSource = interactionSource, indication = null) { onPlayNow() }
                 .focusRequester(focusRequester)
                 .focusable(interactionSource = interactionSource)
@@ -1260,13 +1259,13 @@ private fun NextEpisodeButton(
             Icon(
                 Icons.Default.SkipNext,
                 contentDescription = null,
-                tint = accentColor,
+                tint = colors.content,
                 modifier = Modifier.size(18.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 "NEXT EPISODE IN $countdownSeconds...",
-                color = if (isFocused) accentColor else Color.White.copy(0.8f),
+                color = colors.content,
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                 maxLines = 1
             )
@@ -1288,7 +1287,7 @@ private fun PlayNextEpisodeButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f, label = "playNextScale")
-    val accentColor = MaterialTheme.colorScheme.primary
+    val colors = buttonColors(focused = isFocused)
 
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
@@ -1300,12 +1299,8 @@ private fun PlayNextEpisodeButton(
             .height(40.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White.copy(0.07f))
-            .border(
-                if (isFocused) 2.dp else 1.dp,
-                if (isFocused) accentColor else Color.White.copy(0.15f),
-                RoundedCornerShape(8.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onPlayNext() }
             .focusRequester(focusRequester)
             .focusable(interactionSource = interactionSource)
@@ -1316,13 +1311,13 @@ private fun PlayNextEpisodeButton(
         Icon(
             Icons.Default.SkipNext,
             contentDescription = null,
-            tint = accentColor,
+            tint = colors.content,
             modifier = Modifier.size(18.dp)
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             "PLAY NEXT EPISODE",
-            color = if (isFocused) accentColor else Color.White.copy(0.8f),
+            color = colors.content,
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
             maxLines = 1
         )
@@ -1337,7 +1332,7 @@ private fun SkipIntroButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f, label = "skipIntroScale")
-    val accentColor = MaterialTheme.colorScheme.primary
+    val colors = buttonColors(focused = isFocused)
 
     LaunchedEffect(Unit) {
         runCatching { focusRequester.requestFocus() }
@@ -1349,12 +1344,8 @@ private fun SkipIntroButton(
             .height(40.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White.copy(0.07f))
-            .border(
-                if (isFocused) 2.dp else 1.dp,
-                if (isFocused) accentColor else Color.White.copy(0.15f),
-                RoundedCornerShape(8.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onSkip() }
             .focusRequester(focusRequester)
             .focusable(interactionSource = interactionSource)
@@ -1365,13 +1356,13 @@ private fun SkipIntroButton(
         Icon(
             Icons.Default.SkipNext,
             contentDescription = null,
-            tint = accentColor,
+            tint = colors.content,
             modifier = Modifier.size(18.dp)
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             "SKIP INTRO",
-            color = if (isFocused) accentColor else Color.White.copy(0.8f),
+            color = colors.content,
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
             maxLines = 1
         )
@@ -1572,8 +1563,14 @@ private fun ControlButton(
     buttonSize: Dp = 40.dp,
     iconSize: Dp = 20.dp
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val colors = buttonColors(focused = isFocused)
+    val border = Border(BorderStroke(colors.borderWidth, colors.border), shape = CircleShape)
+
     IconButton(
         onClick = onClick,
+        interactionSource = interactionSource,
         modifier = Modifier
             .size(buttonSize)
             .then(
@@ -1589,11 +1586,12 @@ private fun ControlButton(
             }
             .touchClick(onClick = onClick),
         colors = IconButtonDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color.White,
-            contentColor = Color.White,
-            focusedContentColor = Color.Black
+            containerColor = colors.container,
+            focusedContainerColor = colors.container,
+            contentColor = colors.content,
+            focusedContentColor = colors.content
         ),
+        border = IconButtonDefaults.border(border = border, focusedBorder = border),
         shape = IconButtonDefaults.shape(shape = CircleShape)
     ) {
         Icon(
@@ -1937,19 +1935,15 @@ private fun PlayerErrorButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f, label = "errorBtnScale")
-    val accentColor = MaterialTheme.colorScheme.primary
+    val colors = buttonColors(focused = isFocused)
 
     Row(
         modifier = Modifier
             .height(40.dp)
             .scale(scale)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color.White.copy(0.07f))
-            .border(
-                if (isFocused) 2.dp else 1.dp,
-                if (isFocused) accentColor else Color.White.copy(0.15f),
-                RoundedCornerShape(8.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(8.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
             .focusRequester(focusRequester)
             .focusable(interactionSource = interactionSource)
@@ -1960,13 +1954,13 @@ private fun PlayerErrorButton(
         Icon(
             icon,
             contentDescription = null,
-            tint = if (isFocused) accentColor else Color.White.copy(0.8f),
+            tint = colors.content,
             modifier = Modifier.size(18.dp)
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             label,
-            color = if (isFocused) accentColor else Color.White.copy(0.8f),
+            color = colors.content,
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
             maxLines = 1
         )

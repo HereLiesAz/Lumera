@@ -64,6 +64,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.hereliesaz.illumera.ui.settings.ThemeEditorScreen
 import com.hereliesaz.illumera.R
+import com.hereliesaz.illumera.ui.components.buttonColors
 import com.hereliesaz.illumera.data.model.ProfileEntity
 import com.hereliesaz.illumera.data.model.ThemeEntity
 import com.hereliesaz.illumera.ui.addons.VoidButton
@@ -1294,20 +1295,14 @@ private fun UploadAvatarButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f)
+    val colors = buttonColors(focused = isFocused)
     
     Box(
         modifier = Modifier
             .scale(scale)
             .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (isFocused) MaterialTheme.colorScheme.primary
-                else Color.White.copy(alpha = 0.1f)
-            )
-            .border(
-                width = 2.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.3f),
-                shape = RoundedCornerShape(12.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(12.dp))
             .focusRequester(focusRequester)
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
             .focusable(interactionSource = interactionSource)
@@ -1317,7 +1312,7 @@ private fun UploadAvatarButton(
         Text(
             "Upload Your Own",
             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-            color = if (isFocused) Color.Black else Color.White.copy(alpha = 0.8f)
+            color = colors.content
         )
     }
 }
@@ -1444,20 +1439,14 @@ private fun CreateThemeButton(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (isFocused) 1.05f else 1f)
+    val colors = buttonColors(focused = isFocused)
     
     Box(
         modifier = Modifier
             .scale(scale)
             .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (isFocused) MaterialTheme.colorScheme.primary
-                else Color.White.copy(alpha = 0.1f)
-            )
-            .border(
-                width = 2.dp,
-                color = if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.3f),
-                shape = RoundedCornerShape(12.dp)
-            )
+            .background(colors.container)
+            .border(colors.borderWidth, colors.border, RoundedCornerShape(12.dp))
             .focusRequester(focusRequester)
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
             .focusable(interactionSource = interactionSource)
@@ -1467,7 +1456,7 @@ private fun CreateThemeButton(
         Text(
             "Create Your Own",
             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-            color = if (isFocused) Color.Black else Color.White.copy(alpha = 0.8f)
+            color = colors.content
         )
     }
 }
