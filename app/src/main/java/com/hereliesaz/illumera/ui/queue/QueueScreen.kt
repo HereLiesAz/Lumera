@@ -99,6 +99,28 @@ fun QueueScreen(
     }
 }
 
+/**
+ * The card focus should move to when the focused card [key] is no longer in any row: the
+ * card now at its old position in the same row (or that row's new last card), else the
+ * nearest card of another row that still has cards. Null when every row is empty.
+ */
+internal fun queueFocusNeighbour(
+    key: String,
+    previousRows: List<List<String>>,
+    currentRows: List<List<String>>
+): String? {
+    val oldRow = previousRows.indexOfFirst { key in it }
+    if (oldRow >= 0) {
+        val oldIndex = previousRows[oldRow].indexOf(key)
+        val row = currentRows.getOrNull(oldRow).orEmpty()
+        if (row.isNotEmpty()) return row[oldIndex.coerceAtMost(row.lastIndex)]
+    }
+    val order = if (oldRow >= 0) {
+        currentRows.indices.sortedBy { kotlin.math.abs(it - oldRow) }
+    } else currentRows.indices.toList()
+    return order.firstNotNullOfOrNull { currentRows[it].firstOrNull() }
+}
+
 @Composable
 fun QueueSection(
     entryRequester: FocusRequester,
@@ -127,22 +149,37 @@ fun QueueSection(
         queueManager.resolveMissingArtwork()
     }
 
+    // The rows as they were on the previous pass, so a focused card that disappears (removed
+    // from its menu, played, refreshed away) can hand focus to its nearest neighbour instead
+    // of focus jumping back to the top of the screen.
+    val previousRows = remember { arrayOf(emptyList<String>(), emptyList<String>()) }
     LaunchedEffect(
         state.manualItems,
         state.suggestions,
         focusedQueueKey,
         restoreEntryFocusWhenFocusedKeyMissing
     ) {
-        val key = focusedQueueKey ?: return@LaunchedEffect
-        val stillExists = state.manualItems.any { it.stableKey == key } ||
-            state.suggestions.any { it.stableKey == key }
-        if (!stillExists) {
-            onQueueFocused(null)
-            if (restoreEntryFocusWhenFocusedKeyMissing) {
-                kotlinx.coroutines.delay(50)
-                runCatching { entryRequester.requestFocus() }
+        val manualKeys = state.manualItems.map { it.stableKey }
+        val suggestionKeys = state.suggestions.map { it.stableKey }
+        val key = focusedQueueKey
+        if (key != null && key !in manualKeys && key !in suggestionKeys) {
+            val neighbour = queueFocusNeighbour(
+                key = key,
+                previousRows = listOf(previousRows[0], previousRows[1]),
+                currentRows = listOf(manualKeys, suggestionKeys)
+            )
+            if (neighbour != null) {
+                onQueueFocused(neighbour) // the card's own LaunchedEffect focuses it
+            } else {
+                onQueueFocused(null)
+                if (restoreEntryFocusWhenFocusedKeyMissing) {
+                    kotlinx.coroutines.delay(50)
+                    runCatching { entryRequester.requestFocus() }
+                }
             }
         }
+        previousRows[0] = manualKeys
+        previousRows[1] = suggestionKeys
     }
 
     Column(

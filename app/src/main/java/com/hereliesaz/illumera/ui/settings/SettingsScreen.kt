@@ -1,5 +1,9 @@
 package com.hereliesaz.illumera.ui.settings
 
+import com.hereliesaz.illumera.ui.navigation.openNavDrawer
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.*
@@ -64,7 +68,6 @@ fun SettingsScreen(
     entryRequester: FocusRequester,
     drawerRequester: FocusRequester,
     onDashboardChanged: () -> Unit = {},
-    onContentFocusChanged: (Boolean) -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     var selectedSection by remember { mutableStateOf(SettingsSection.Personalization) }
@@ -92,22 +95,25 @@ fun SettingsScreen(
 
     val isTopNav = currentProfile?.navPosition == "top"
 
-    // SCREEN FOCUS TRACKING (Content + Sidebar)
-    var isScreenFocused by remember { mutableStateOf(false) }
+    // Opening Settings focuses the selected section (entryRequester follows it); focus lost
+    // under a sub-page's refresh goes back there too.
+    val focusMemory = rememberFocusMemory()
+    RestoreFocusOnResume(memory = focusMemory, fallback = entryRequester)
 
     // BACK LOGIC
-    // Enabled when:
-    // 1. Side Nav (Always)
-    // 2. Top Nav AND Screen is Focused (Handle = Open Nav/Go Back)
-    // Disabled when Top Nav AND Screen NOT Focused (Nav is focused) -> Let Nav handle Close.
-    BackHandler(enabled = !isTopNav || isScreenFocused) {
-        if (isCompact && contentPanelOpen) {
-            contentPanelOpen = false
-            itemRequesters[selectedSection]?.requestFocus()
-        } else if (isContentFocused) {
-            itemRequesters[selectedSection]?.requestFocus()
-        } else {
-            drawerRequester.requestFocus()
+    // Settings is a main screen: Back first unwinds everything inside it (sub-screens'
+    // own BackHandlers are composed later and win; then close the phone content panel,
+    // then leave the content pane for the section list). From the section list this handler
+    // stands down and the main-root Back (MainRootBackHandler) opens the menu.
+    BackHandler(enabled = (isCompact && contentPanelOpen) || isContentFocused || isTransitioning) {
+        when {
+            isCompact && contentPanelOpen -> {
+                contentPanelOpen = false
+                itemRequesters[selectedSection]?.requestFocus()
+            }
+            isContentFocused -> itemRequesters[selectedSection]?.requestFocus()
+            // Mid-transition into a section: its content is about to take focus.
+            else -> Unit
         }
     }
     
@@ -177,16 +183,12 @@ fun SettingsScreen(
                                 when (it.key) {
                                     Key.DirectionLeft -> {
                                         if (!isTransitioning) {
-                                            drawerRequester.requestFocus()
+                                            drawerRequester.openNavDrawer()
                                         }
                                         true
                                     }
-                                    Key.Back -> {
-                                        if (!isTransitioning) {
-                                            drawerRequester.requestFocus()
-                                            true
-                                        } else false
-                                    }
+                                    // Back is left to the screen's BackHandler, which
+                                    // unwinds panels before opening the side menu.
                                     Key.DirectionUp -> {
                                         // Up on first section -> go to drawer/topnav (ONLY in top nav mode)
                                         if (isFirstSection && !isTransitioning && isTopNav) {
@@ -284,7 +286,7 @@ fun SettingsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .onFocusChanged { isScreenFocused = it.hasFocus }
+            .focusMemoryRoot(focusMemory)
     ) {
         if (isCompact) {
             // --- PHONE / NARROW LAYOUT ---
@@ -297,7 +299,7 @@ fun SettingsScreen(
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.background)
                         .padding(top = colTopPadding, start = colStartPadding, end = 16.dp)
-                        .onFocusChanged { if (it.hasFocus) { isContentFocused = false; onContentFocusChanged(false) } }
+                        .onFocusChanged { if (it.hasFocus) { isContentFocused = false } }
                         .rememberLastFocus()
                 ) {
                     sidebarContent()
@@ -336,7 +338,7 @@ fun SettingsScreen(
                             .focusGroup()
                             .focusRequester(contentPaneRequester)
                             .rememberLastFocus()
-                            .onFocusChanged { if (it.hasFocus) { isContentFocused = true; onContentFocusChanged(true) } }
+                            .onFocusChanged { if (it.hasFocus) { isContentFocused = true } }
                     ) {
                         Column(modifier = Modifier.fillMaxSize().padding(top = contentTopPadding, start = 24.dp, end = 24.dp)) {
                             contentPane()
@@ -358,7 +360,7 @@ fun SettingsScreen(
                         .weight(0.28f)
                         .fillMaxHeight()
                         .padding(top = colTopPadding, start = colStartPadding, end = 16.dp)
-                        .onFocusChanged { if (it.hasFocus) { isContentFocused = false; onContentFocusChanged(false) } }
+                        .onFocusChanged { if (it.hasFocus) { isContentFocused = false } }
                         .rememberLastFocus()
                 ) {
                     sidebarContent()
@@ -377,7 +379,7 @@ fun SettingsScreen(
                         .focusGroup()
                         .focusRequester(contentPaneRequester)
                         .rememberLastFocus()
-                        .onFocusChanged { if (it.hasFocus) { isContentFocused = true; onContentFocusChanged(true) } }
+                        .onFocusChanged { if (it.hasFocus) { isContentFocused = true } }
                 ) {
                     // INCREASED PADDING: Gutter 64dp (Sidebar ends at weight 0.28, this starts at 0 without extra padding logic, so we add start padding here)
                     Column(modifier = Modifier.fillMaxSize().padding(top = contentTopPadding, start = 64.dp, end = 80.dp)) {

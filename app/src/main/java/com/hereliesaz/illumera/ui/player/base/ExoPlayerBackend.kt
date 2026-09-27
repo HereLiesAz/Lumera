@@ -94,6 +94,12 @@ internal fun shouldAdvanceSourceForHttpStatus(
     hasRetried416: Boolean = false
 ): Boolean = responseCode != 416 || hasRetried416
 
+// A source error this close to the end means the file finished, not that the source is bad.
+internal const val END_OF_STREAM_WINDOW_MS = 30_000L
+
+internal fun isWithinEndWindow(positionMs: Long, durationMs: Long): Boolean =
+    durationMs > 0L && positionMs > 0L && durationMs - positionMs <= END_OF_STREAM_WINDOW_MS
+
 internal fun isFailedRuntimeCheckCode(errorCodeName: String): Boolean =
     errorCodeName.equals("ERROR_CODE_FAILED_RUNTIME_CHECK", ignoreCase = true)
 
@@ -365,6 +371,13 @@ class ExoPlayerBackend(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            // A source failing in the last stretch has played to its end: servers often answer
+            // the read past the last byte with 416 or drop the connection. Treat it as the end of
+            // the episode, or the retries below restart it or switch to the next source.
+            if (isSourceErrorAtEnd(error)) {
+                _uiState.update { it.copy(isEnded = true, isBuffering = false, errorMessage = null) }
+                return
+            }
             if (retryAfterFailedRuntimeCheck(error)) return
             if (retryFromStartAfter416(error)) return
             // A non-2xx response means the current media URL itself was rejected. When
@@ -1540,6 +1553,16 @@ class ExoPlayerBackend(
             autoPlay = shouldAutoPlay,
             resetSourceRetryBudget = true
         )
+    }
+
+    /** An HTTP, connection or parsing error within the final [END_OF_STREAM_WINDOW_MS] of the file. */
+    private fun isSourceErrorAtEnd(error: PlaybackException): Boolean {
+        val codeName = error.errorCodeName.uppercase(Locale.US)
+        if (!codeName.startsWith("ERROR_CODE_IO_") && !codeName.contains("PARSING")) return false
+        val player = exoPlayer ?: return false
+        val duration = player.duration.takeIf { it > 0 } ?: _uiState.value.durationMs
+        val position = player.currentPosition.takeIf { it > 0 } ?: _uiState.value.positionMs
+        return isWithinEndWindow(position, duration)
     }
 
     private fun isParsingErrorNearEnd(error: PlaybackException): Boolean {

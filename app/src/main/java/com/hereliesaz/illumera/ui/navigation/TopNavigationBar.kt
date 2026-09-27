@@ -67,6 +67,39 @@ fun TopNavigationBar(
     onExit: () -> Unit = {},
     content: @Composable () -> Unit
 ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // LAYER 1: Content (Full Screen)
+        Box(modifier = Modifier.fillMaxSize()) {
+            content()
+        }
+        TopNavigationBarOverlay(
+            currentDestination = currentDestination,
+            currentProfile = currentProfile,
+            topNavRequesters = topNavRequesters,
+            onNavigate = onNavigate,
+            onEnterContent = onEnterContent,
+            onLogout = onLogout,
+            onExit = onExit
+        )
+    }
+}
+
+/**
+ * The top bar and its shading (layers 2-5), drawn over full-screen content. MainShell
+ * composes it apart from the content so switching menu layout leaves the content in place.
+ */
+@Composable
+fun TopNavigationBarOverlay(
+    currentDestination: NavDestination,
+    currentProfile: ProfileEntity?,
+    topNavRequesters: Map<NavDestination, FocusRequester>,
+    onNavigate: (NavDestination) -> Unit,
+    onEnterContent: () -> Unit,
+    onLogout: () -> Unit = {},
+    onExit: () -> Unit = {},
+    modifier: Modifier = Modifier,
+    onBack: () -> Unit = onEnterContent
+) {
     // 1. Define groups
     // Queue now lives inside Watchlist, so only Watchlist is exposed as a top-level tab.
     val centerItems = buildList {
@@ -97,9 +130,10 @@ fun TopNavigationBar(
     // Combined: navbar is active if either section has focus
     val isTopNavActive = isSettingsAreaFocused || isCenterAreaFocused
 
-    // BACK HANDLER: When nav is active, Back press should close it (return to content)
+    // BACK HANDLER: When nav is active, Back closes it (return to content), or follows the
+    // shell's policy (MainShell passes onBack: exit when root Back opened it).
     androidx.activity.compose.BackHandler(enabled = isTopNavActive) {
-        onEnterContent()
+        onBack()
     }
 
     // Dropdown State
@@ -121,12 +155,9 @@ fun TopNavigationBar(
     val staticMaskGradientEndPx = with(gradientDensity) { 180.dp.toPx() }
     val focusedGradientEndPx = with(gradientDensity) { 400.dp.toPx() }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
 
-        // LAYER 1: Content (Full Screen)
-        Box(modifier = Modifier.fillMaxSize()) {
-            content()
-        }
+        // LAYER 1 (the content) is the caller's, under this overlay.
 
         // LAYER 2: Static Top Gradient (Hero Mask)
         if (showStaticMask) {
@@ -254,10 +285,10 @@ fun TopNavigationBar(
                          destination = destination,
                          isSelected = isSelected,
                          isTopNavActive = isTopNavActive,
-                         onNavigate = {
-                             if (currentDestination == destination) onEnterContent()
-                             else onNavigate(destination)
-                         },
+                         // Always route the selection: the host decides what re-selecting the
+                         // current destination means (e.g. return a sub-page to its root, or leave
+                         // the grid view), so it must never be swallowed here.
+                         onNavigate = { onNavigate(destination) },
                          modifier = Modifier
                              .focusRequester(topNavRequesters[destination]!!)
                              .onPreviewKeyEvent { event ->
@@ -306,10 +337,7 @@ fun TopNavigationBar(
                     destination = settingsItem,
                     isSelected = currentDestination == settingsItem,
                     isTopNavActive = true,
-                    onNavigate = { 
-                        if (currentDestination == settingsItem) onEnterContent() 
-                        else onNavigate(settingsItem)
-                    },
+                    onNavigate = { onNavigate(settingsItem) },
                     modifier = Modifier
                         .focusRequester(topNavRequesters[settingsItem]!!)
                         .onFocusChanged { isSettingsFocused = it.isFocused }

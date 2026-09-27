@@ -1,11 +1,13 @@
 package com.hereliesaz.illumera.ui.studio
 
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hereliesaz.illumera.data.tmdb.TmdbDiscoverRail
 import com.hereliesaz.illumera.data.tmdb.TmdbEntityDetail
 import com.hereliesaz.illumera.data.tmdb.TmdbMetadataService
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -13,7 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import javax.inject.Inject
 
 sealed class StudioDetailState {
     data object Loading : StudioDetailState()
@@ -24,18 +25,23 @@ sealed class StudioDetailState {
     data class Error(val message: String) : StudioDetailState()
 }
 
-@HiltViewModel
-class StudioDetailViewModel @Inject constructor(
+/** One studio page's entity, given by its back-stack entry (StudioKey) through [Factory]. */
+@HiltViewModel(assistedFactory = StudioDetailViewModel.Factory::class)
+class StudioDetailViewModel @AssistedInject constructor(
     private val tmdbMetadataService: TmdbMetadataService,
-    savedStateHandle: SavedStateHandle
+    @Assisted("entityId") val entityId: Int,
+    @Assisted("entityKind") val entityKind: String,
+    @Assisted("sourceType") val sourceType: String
 ) : ViewModel() {
 
-    val entityId: Int = (savedStateHandle.get<String>("entityId") ?: "0").toIntOrNull() ?: 0
-    val entityKind: String = savedStateHandle.get<String>("entityKind") ?: "company"
-    val entityName: String = java.net.URLDecoder.decode(
-        savedStateHandle.get<String>("entityName") ?: "", "UTF-8"
-    )
-    val sourceType: String = savedStateHandle.get<String>("sourceType") ?: "movie"
+    @AssistedFactory
+    interface Factory {
+        fun create(
+            @Assisted("entityId") entityId: Int,
+            @Assisted("entityKind") entityKind: String,
+            @Assisted("sourceType") sourceType: String
+        ): StudioDetailViewModel
+    }
 
     private val _state = MutableStateFlow<StudioDetailState>(StudioDetailState.Loading)
     val state: StateFlow<StudioDetailState> = _state

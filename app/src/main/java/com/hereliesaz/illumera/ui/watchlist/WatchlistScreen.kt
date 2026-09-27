@@ -1,5 +1,9 @@
 package com.hereliesaz.illumera.ui.watchlist
 
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
+import com.hereliesaz.illumera.ui.home.resolveRowRestoreIndex
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -87,7 +91,14 @@ fun WatchlistScreen(
         }
     }
 
-    androidx.activity.compose.BackHandler { drawerRequester.requestFocus() }
+    // Main-screen Back is MainRootBackHandler's: every in-screen Back action (Queue reorder
+    // mode, item menus) has its own handler composed later, so it runs first.
+
+    // The remembered card lives in WatchlistViewModel (lastFocusedKey, row states), and the
+    // rows (and the queue) attach entryRequester to it; this only triggers the restore on
+    // resume, replacing the entry's old delay(200) request.
+    val focusMemory = rememberFocusMemory()
+    RestoreFocusOnResume(memory = focusMemory, fallback = entryRequester)
 
     val upKeyDebouncer = remember { UpKeyDebouncer() }
     val dpadRepeatGate = remember { DpadRepeatGate() }
@@ -104,8 +115,11 @@ fun WatchlistScreen(
         val rowItems = if (rowIndex == 0) movies else series
         val stillExists = rowItems.any { it.id == itemId }
         if (!stillExists && rowItems.isNotEmpty()) {
-            val fallbackItem = rowItems.last()
-            val fallbackIndex = rowItems.lastIndex
+            // Removed (e.g. taken off the watchlist from its details page): focus its nearest
+            // remaining neighbour at the same position, not the end or start of the row.
+            val fallbackIndex = resolveRowRestoreIndex(key, rowIndex ?: 0, rowItems.map { it.id })
+                ?: rowItems.lastIndex
+            val fallbackItem = rowItems[fallbackIndex]
             lastFocusedKey = "${rowIndex}_${fallbackItem.id}_$fallbackIndex"
             viewModel.lastFocusedKey = lastFocusedKey
         } else if (!stillExists && rowItems.isEmpty()) {
@@ -138,7 +152,7 @@ fun WatchlistScreen(
         com.hereliesaz.illumera.ui.components.LocalWatchedIds provides watchedIds
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().focusMemoryRoot(focusMemory),
             contentPadding = PaddingValues(top = topPadding + 20.dp, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {

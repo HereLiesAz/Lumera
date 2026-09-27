@@ -144,6 +144,8 @@ fun PersonalizationSettings(
     val hubRoundCorners = currentProfile.hubRoundCorners
     val navPos = currentProfile.navPosition
 
+    // Changing Menu Position swaps only the menu chrome (MainShell): this screen, and the
+    // option's focus, stay where they are.
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -972,7 +974,9 @@ fun <T> VoidSegmentedControl(
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
     blockUp: Boolean = false,
-    onFocus: () -> Unit = {}
+    onFocus: () -> Unit = {},
+    /** Attached to the currently selected option, for restoring focus onto it. */
+    selectedFocusRequester: FocusRequester? = null
 ) {
     Row(
         modifier = Modifier
@@ -1009,7 +1013,11 @@ fun <T> VoidSegmentedControl(
                 isSelected = isSelected,
                 onClick = { onOptionSelected(value) },
                 onFocus = onFocus,
-                keyModifier = backModifier.then(upBlockModifier)
+                keyModifier = backModifier.then(upBlockModifier).then(
+                    if (isSelected && selectedFocusRequester != null) {
+                        Modifier.focusRequester(selectedFocusRequester)
+                    } else Modifier
+                )
             )
         }
     }

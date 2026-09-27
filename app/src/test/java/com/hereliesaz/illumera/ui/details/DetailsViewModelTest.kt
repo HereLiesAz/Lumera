@@ -181,6 +181,7 @@ class DetailsViewModelTest {
         tmdbService = mockk<TmdbService>(relaxed = true),
         tmdbMetadataService = mockk<TmdbMetadataService>(relaxed = true),
         traktSyncManager = mockk<TraktSyncManager>(relaxed = true),
-        wutchManager = mockk<WutchManager>(relaxed = true)
+        wutchManager = mockk<WutchManager>(relaxed = true),
+        savedStateHandle = androidx.lifecycle.SavedStateHandle()
     )
 }

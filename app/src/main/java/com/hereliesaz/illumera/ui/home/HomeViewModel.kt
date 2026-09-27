@@ -98,6 +98,21 @@ class HomeViewModel @Inject constructor(
 
     fun getRowScrollPositions(): Map<String, Pair<Int, Int>> = rowScrollPositionsMemory
 
+    /**
+     * A main screen chosen fresh in the menu starts at the top: forget the saved focus and
+     * scroll. The rows stay loaded. Back to a screen (from a page above it) keeps them.
+     */
+    fun forgetPosition() {
+        lastFocusedKeyMemory = null
+        rowScrollPositionsMemory.clear()
+        verticalScrollPositionMemory = Pair(0, 0)
+        hadHistoryWhenPositionSaved = false
+        isRestoringPosition = false
+        _state.update {
+            it.copy(lastFocusedKey = null, rowScrollPositions = emptyMap(), verticalScrollPosition = Pair(0, 0))
+        }
+    }
+
     fun getVerticalScrollPosition(): Pair<Int, Int> = verticalScrollPositionMemory
 
     fun setLastFocusedKey(key: String?) {
