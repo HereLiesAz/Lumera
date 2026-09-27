@@ -1,6 +1,11 @@
 package com.hereliesaz.illumera.ui.search
 
 import com.hereliesaz.illumera.ui.navigation.openNavDrawer
+import com.hereliesaz.illumera.ui.navigation.focus.FocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.restorableFocus
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -81,12 +86,10 @@ fun SearchScreen(
     currentProfile: ProfileEntity?,
     onMovieClick: (MetaItem) -> Unit,
     onViewMore: (title: String, items: List<MetaItem>) -> Unit = { _, _ -> },
-    moviesViewMoreRequester: FocusRequester = remember { FocusRequester() },
-    seriesViewMoreRequester: FocusRequester = remember { FocusRequester() },
-    resultsRequester: FocusRequester = remember { FocusRequester() },
-    lastFocusedId: String? = null,
-    onFocusedIdChange: (String?) -> Unit = {},
-    watchedIds: Set<String> = emptySet()
+    watchedIds: Set<String> = emptySet(),
+    // This entry's place: the poster ("poster:<id>") or "view more" card
+    // ("view_more_movies" / "view_more_series") that opened the page above it.
+    focusMemory: FocusMemory = rememberFocusMemory()
 ) {
     val state by viewModel.state.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -100,19 +103,14 @@ fun SearchScreen(
 
     val isTopNav = currentProfile?.navPosition == "top"
 
-    var isContentFocused by remember { mutableStateOf(false) }
-    // Guards against double-back race: when returning from details, focus restoration
-    // takes ~200ms. Until focus is established, keep BackHandler enabled so a quick
-    // second back press doesn't exit the app. Resets on each fresh composition.
-    var focusEverSet by remember { mutableStateOf(false) }
-
     // Whether focus is in the results pane (right of the keyboard) — TV layout only.
     var isResultsFocused by remember { mutableStateOf(false) }
 
     // BACK: Search is a main screen, so Back first unwinds the search itself —
     // dismiss the system keyboard, leave the results for the keyboard, clear the
-    // query — and only opens the side menu once there is nothing left to back out of.
-    BackHandler(enabled = !isTopNav || isContentFocused || !focusEverSet) {
+    // query. Once there is nothing left to back out of, this handler stands down and
+    // the main-root Back (MainRootBackHandler) opens the menu.
+    BackHandler(enabled = keepFocused || isResultsFocused || state.query.isNotEmpty()) {
         when {
             keepFocused -> {
                 keepFocused = false
@@ -121,9 +119,18 @@ fun SearchScreen(
             }
             isResultsFocused -> runCatching { entryRequester.requestFocus() }
             state.query.isNotEmpty() -> viewModel.onQueryChange("")
-            else -> drawerRequester.openNavDrawer()
         }
     }
+
+    // Back from a Details page or the grid lands on the card that opened it; a fresh
+    // Search starts on the keyboard.
+    RestoreFocusOnResume(
+        memory = focusMemory,
+        fallback = entryRequester,
+        enabled = !state.isLoading,
+        // Posters are keyed by id: a result that is gone has no neighbour, so the keyboard.
+        neighbour = { null }
+    )
 
     // Continuously maintain focus when system keyboard is active
     LaunchedEffect(keepFocused) {
@@ -140,10 +147,7 @@ fun SearchScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .onFocusChanged {
-                isContentFocused = it.hasFocus
-                if (it.hasFocus) focusEverSet = true
-            }
+            .focusMemoryRoot(focusMemory)
     ) {
         LumeraBackground {
         if (!isTv) {
@@ -270,11 +274,7 @@ fun SearchScreen(
                                         event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp
                                     }
                                     val moviePreview = state.movies.take(PREVIEW_COUNT)
-                                    moviePreview.forEachIndexed { index, movie ->
-                                        val isFirstItem = index == 0
-                                        val isRemembered = movie.id == lastFocusedId
-                                        val shouldAttachRequester = isRemembered || (lastFocusedId == null && isFirstItem)
-
+                                    moviePreview.forEach { movie ->
                                         LumeraCard(
                                             title = movie.name,
                                             posterUrl = movie.poster,
@@ -285,8 +285,7 @@ fun SearchScreen(
                                                 .width(posterWidth)
                                                 .height(posterHeight)
                                                 .then(blockUp)
-                                                .onFocusChanged { if (it.isFocused) onFocusedIdChange(movie.id) }
-                                                .then(if (shouldAttachRequester) Modifier.focusRequester(resultsRequester) else Modifier)
+                                                .restorableFocus("poster:${movie.id}", focusMemory)
                                         )
                                     }
 
@@ -297,8 +296,7 @@ fun SearchScreen(
                                             .width(posterWidth)
                                             .height(posterHeight)
                                             .then(blockUp)
-                                            .focusRequester(moviesViewMoreRequester)
-                                            .onFocusChanged { if (it.isFocused) onFocusedIdChange("viewmore_movies") }
+                                            .restorableFocus("view_more_movies", focusMemory)
                                     )
                                 }
                             }
@@ -323,9 +321,7 @@ fun SearchScreen(
                                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                                 ) {
                                     val seriesPreview = state.series.take(PREVIEW_COUNT)
-                                    seriesPreview.forEachIndexed { index, series ->
-                                        val isRemembered = series.id == lastFocusedId
-
+                                    seriesPreview.forEach { series ->
                                         LumeraCard(
                                             title = series.name,
                                             posterUrl = series.poster,
@@ -334,8 +330,7 @@ fun SearchScreen(
                                             modifier = Modifier
                                                 .width(posterWidth)
                                                 .height(posterHeight)
-                                                .onFocusChanged { if (it.isFocused) onFocusedIdChange(series.id) }
-                                                .then(if (isRemembered) Modifier.focusRequester(resultsRequester) else Modifier)
+                                                .restorableFocus("poster:${series.id}", focusMemory)
                                         )
                                     }
 
@@ -345,8 +340,7 @@ fun SearchScreen(
                                         modifier = Modifier
                                             .width(posterWidth)
                                             .height(posterHeight)
-                                            .focusRequester(seriesViewMoreRequester)
-                                            .onFocusChanged { if (it.isFocused) onFocusedIdChange("viewmore_series") }
+                                            .restorableFocus("view_more_series", focusMemory)
                                     )
                                 }
                             }

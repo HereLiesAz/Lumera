@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,9 +21,25 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.navigation3.runtime.NavEntryDecorator
 import com.hereliesaz.illumera.data.model.ProfileEntity
 
+/** What opened the menu, which decides what Back does while it is open. */
+enum class MenuOpener {
+    /** Back at a main screen with nothing left to unwind ([MainRootBackHandler]). */
+    RootBack,
+
+    /** D-pad Left off the content's edge (or Up into the top bar), or a screen's own opener. */
+    Left,
+
+    /** A rightward touch swipe from the left screen edge. */
+    Swipe
+}
+
 /**
  * What [MainShell] shares with the back-stack entries under it: whether the menu is open
- * (holds focus), and how to close it the way the chrome's own Back does.
+ * (holds focus), what opened it, and the Back policy while it is open.
+ *
+ * Back with the menu open: when root Back opened it, a second Back leaves the app; when Left
+ * or a swipe opened it, Back closes it and focus goes back where it was. Right, a tap beside
+ * the menu and a rightward swipe always close it.
  */
 @Stable
 class MainShellState {
@@ -31,29 +49,92 @@ class MainShellState {
     var isMenuOpen by mutableStateOf(false)
         internal set
 
+    /** What opened the menu that is open now; null while it is closed. */
+    var openedBy by mutableStateOf<MenuOpener?>(null)
+        internal set
+
+    /** Set just before an open that is not a Left move, and read as the menu takes focus. */
+    internal var pendingOpener: MenuOpener? = null
+
     internal var closeMenuAction: () -> Unit = {}
+    internal var exitAction: () -> Unit = {}
 
     /** Closes the menu: focus goes back to the content, restored where the layout allows. */
     fun closeMenu() = closeMenuAction()
+
+    /** Back while the menu is open: exit if root Back opened it, otherwise close it. */
+    fun onMenuBack() {
+        if (openedBy == MenuOpener.RootBack) exitAction() else closeMenu()
+    }
+
+    /**
+     * Root Back: opens the menu at [requester] (the current screen's item), or at [fallback]
+     * when that item is hidden. Goes through [openNavDrawer], the only sanctioned opener.
+     */
+    fun openMenuFromRootBack(requester: FocusRequester?, fallback: FocusRequester? = null): Boolean =
+        openMenu(MenuOpener.RootBack, requester, fallback)
+
+    internal fun openMenu(opener: MenuOpener, requester: FocusRequester?, fallback: FocusRequester? = null): Boolean {
+        pendingOpener = opener
+        val opened = runCatching { requester?.openNavDrawer() == true }.getOrDefault(false) ||
+            runCatching { fallback?.openNavDrawer() == true }.getOrDefault(false)
+        if (!opened) pendingOpener = null
+        return opened
+    }
+
+    internal fun onChromeFocusChanged(hasFocus: Boolean) {
+        if (hasFocus && !isMenuOpen) {
+            openedBy = pendingOpener ?: MenuOpener.Left
+            pendingOpener = null
+        } else if (!hasFocus) {
+            openedBy = null
+        }
+        isMenuOpen = hasFocus
+    }
 }
+
+/** The [MainShellState] over the current back-stack entry; null outside [MainShell]. */
+val LocalMainShellState = staticCompositionLocalOf<MainShellState?> { null }
 
 @Composable
 fun rememberMainShellState(): MainShellState = remember { MainShellState() }
 
 /**
- * Registers "Back closes the open menu" inside each back-stack entry, after the entry's own
- * content. Back handlers run last-registered first, and an entry's screen registers its own
- * (a main screen's "Back opens the menu", for one) whenever it is composed again, e.g. on
- * the way back from a Details page; registering this after them keeps the open menu first.
+ * Registers the open menu's Back inside each back-stack entry, after the entry's own content:
+ * [MainShellState.onMenuBack], which exits the app when root Back opened the menu and closes
+ * it when Left or a swipe did. Back handlers run last-registered first, and an entry's screen
+ * registers its own (a main screen's [MainRootBackHandler], for one) whenever it is composed
+ * again, e.g. on the way back from a Details page; registering this after them keeps the open
+ * menu first.
  */
 @Composable
 fun <T : Any> rememberMenuBackNavEntryDecorator(state: MainShellState): NavEntryDecorator<T> =
     remember(state) {
         NavEntryDecorator { entry ->
             entry.Content()
-            BackHandler(enabled = state.isMenuOpen) { state.closeMenu() }
+            BackHandler(enabled = state.isMenuOpen) { state.onMenuBack() }
         }
     }
+
+/**
+ * A main screen's last Back: opens the menu (through [openNavDrawer]) once the screen has
+ * nothing of its own left to unwind. Register it once per main-root entry, before the screen's
+ * content, so the screen's own handlers (a search's keyboard and query, Settings' panels) are
+ * registered later and run first. With the menu open, the menu's Back takes over.
+ *
+ * [menuRequester] is the screen's menu item; [fallbackRequester] (Home's) is used when the
+ * profile hides that item.
+ */
+@Composable
+fun MainRootBackHandler(
+    state: MainShellState,
+    menuRequester: FocusRequester,
+    fallbackRequester: FocusRequester? = null
+) {
+    BackHandler(enabled = !state.isMenuOpen) {
+        state.openMenuFromRootBack(menuRequester, fallbackRequester)
+    }
+}
 
 /**
  * The app's screens with the menu chrome over them.
@@ -65,6 +146,7 @@ fun <T : Any> rememberMenuBackNavEntryDecorator(state: MainShellState): NavEntry
  * screen's state and the focused element all stay as they were.
  *
  * The NavDisplay should carry [rememberMenuBackNavEntryDecorator] with the same [state].
+ * [onExit] leaves the app: the menu's Exit item, and Back on a menu that root Back opened.
  */
 @Composable
 fun MainShell(
@@ -91,20 +173,23 @@ fun MainShell(
         } else {
             { if (!contentState.restoreContentFocus()) onEnterContent() }
         }
+        state.exitAction = onExit
     }
     Box(modifier = modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize().navDrawerContentLayer(contentState)) {
-            content()
+            CompositionLocalProvider(LocalMainShellState provides state) {
+                content()
+            }
         }
         if (showChrome) {
-            DisposableEffect(Unit) { onDispose { state.isMenuOpen = false } }
+            DisposableEffect(Unit) { onDispose { state.onChromeFocusChanged(false) } }
             Crossfade(
                 targetState = navPosition,
                 animationSpec = tween(400),
                 label = "NavSwitcher",
                 modifier = Modifier
                     .fillMaxSize()
-                    .onFocusChanged { state.isMenuOpen = it.hasFocus }
+                    .onFocusChanged { state.onChromeFocusChanged(it.hasFocus) }
             ) { position ->
                 if (position == "top") {
                     TopNavigationBarOverlay(
@@ -114,7 +199,8 @@ fun MainShell(
                         onNavigate = onNavigate,
                         onEnterContent = onEnterContent,
                         onLogout = onLogout,
-                        onExit = onExit
+                        onExit = onExit,
+                        onBack = state::onMenuBack
                     )
                 } else {
                     NavDrawerRail(
@@ -123,7 +209,9 @@ fun MainShell(
                         currentProfile = currentProfile,
                         drawerRequesters = menuRequesters,
                         onNavigate = onNavigate,
-                        onClose = onEnterContent
+                        onClose = onEnterContent,
+                        onBack = state::onMenuBack,
+                        onSwipeOpen = { state.pendingOpener = MenuOpener.Swipe }
                     )
                 }
             }

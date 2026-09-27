@@ -147,7 +147,9 @@ fun NavDrawerRail(
     drawerRequesters: Map<NavDestination, FocusRequester>,
     onNavigate: (NavDestination) -> Unit,
     onClose: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
+    onSwipeOpen: () -> Unit = {}
 ) {
     var isMenuFocused by remember { mutableStateOf(false) }
     // Touch never produces a focus event, so a touch device gets no way to trigger
@@ -173,6 +175,9 @@ fun NavDrawerRail(
     val closeMenu: () -> Unit = {
         if (!contentState.restoreContentFocus()) onClose()
     }
+    // Back while open. MainShell passes its policy (exit when root Back opened the menu);
+    // on its own the rail closes, like Right.
+    val backFromMenu: () -> Unit = onBack ?: closeMenu
     val openMenu: () -> Unit = {
         val opened = runCatching {
             drawerRequesters[currentDestination]?.openNavDrawer() == true
@@ -216,7 +221,7 @@ fun NavDrawerRail(
         // (MainShell also closes the menu from inside each back-stack entry: see
         // rememberMenuBackNavEntryDecorator.)
         BackHandler(enabled = isMenuFocused) {
-            closeMenu()
+            backFromMenu()
         }
 
         // LAYER 2: Static Hero Mask
@@ -307,19 +312,18 @@ fun NavDrawerRail(
         val menuOpenState = rememberUpdatedState(isMenuFocused)
         val openMenuState = rememberUpdatedState(openMenu)
         val closeMenuState = rememberUpdatedState(closeMenu)
+        val swipeOpenState = rememberUpdatedState(onSwipeOpen)
         Box(
             modifier = Modifier
                 .width(width)
                 .fillMaxHeight()
                 .zIndex(2f)
                 .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown &&
-                        (event.key == Key.DirectionRight || event.key == Key.Back)
-                    ) {
-                        closeMenu()
-                        true
-                    } else {
-                        false
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionRight -> { closeMenu(); true }
+                        Key.Back -> { backFromMenu(); true }
+                        else -> false
                     }
                 }
                 // Touch: a rightward swipe that STARTS at the left screen edge opens the menu
@@ -340,6 +344,7 @@ fun NavDrawerRail(
                                 if (menuOpenState.value) {
                                     closeMenuState.value()
                                 } else if (startedAtEdge) {
+                                    swipeOpenState.value()
                                     openMenuState.value()
                                 }
                             }
@@ -376,16 +381,7 @@ fun NavDrawerRail(
                         modifier = Modifier
                             .focusRequester(drawerRequesters[dest]!!)
                             .onPreviewKeyEvent {
-                                if (it.type == KeyEventType.KeyDown) {
-                                    if (it.key == Key.DirectionRight || it.key == Key.Back) {
-                                        closeMenu()
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                }
+                                menuItemKey(it, closeMenu, backFromMenu)
                             }
                     )
                 }
@@ -403,16 +399,7 @@ fun NavDrawerRail(
                             modifier = Modifier
                                 .focusRequester(drawerRequesters[NavDestination.Profile]!!)
                                 .onPreviewKeyEvent {
-                                    if (it.type == KeyEventType.KeyDown) {
-                                        if (it.key == Key.DirectionRight || it.key == Key.Back) {
-                                            closeMenu()
-                                            true
-                                        } else {
-                                            false
-                                        }
-                                    } else {
-                                        false
-                                    }
+                                    menuItemKey(it, closeMenu, backFromMenu)
                                 }
                         )
                     }
@@ -462,6 +449,16 @@ fun NavDrawerRail(
                 }
             }
         }
+    }
+}
+
+/** A menu item's keys: Right closes the menu; Back follows the menu's Back policy. */
+private fun menuItemKey(event: KeyEvent, close: () -> Unit, back: () -> Unit): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    return when (event.key) {
+        Key.DirectionRight -> { close(); true }
+        Key.Back -> { back(); true }
+        else -> false
     }
 }
 

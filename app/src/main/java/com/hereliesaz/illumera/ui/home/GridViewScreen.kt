@@ -60,6 +60,11 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.hereliesaz.illumera.data.model.stremio.MetaItem
 import com.hereliesaz.illumera.ui.components.LumeraCard
+import com.hereliesaz.illumera.ui.navigation.focus.FocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.restorableFocus
 import com.hereliesaz.illumera.ui.util.touchClick
 import com.hereliesaz.illumera.ui.utils.ImagePrefetcher
 
@@ -93,17 +98,14 @@ private class GridFocusPivotSpec(
 fun GridViewScreen(
     title: String,
     items: List<MetaItem>,
-    lastFocusedIndex: Int?,
-    onFocusChange: (Int) -> Unit,
     onMovieClick: (MetaItem) -> Unit,
     onBack: () -> Unit,
     onLoadMore: () -> Unit = {},
-    // Scroll position persistence for instant restoration
-    initialScrollIndex: Int = 0,
-    initialScrollOffset: Int = 0,
-    onScrollPositionChange: (Int, Int) -> Unit = { _, _ -> },
     watchedIds: Set<String> = emptySet(),
-    externalEntryRequester: androidx.compose.ui.focus.FocusRequester? = null
+    externalEntryRequester: androidx.compose.ui.focus.FocusRequester? = null,
+    // The grid's place in its back-stack entry: the focused card ("item:<index>"). The scroll
+    // comes back with the saveable grid state.
+    focusMemory: FocusMemory = rememberFocusMemory()
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -130,40 +132,11 @@ fun GridViewScreen(
         )
     }
     
-    // Grid state with restored position - start at exact item index for instant restoration
-    val gridState = rememberLazyGridState(
-        initialFirstVisibleItemIndex = lastFocusedIndex ?: initialScrollIndex,
-        initialFirstVisibleItemScrollOffset = initialScrollOffset
-    )
-    var lastSavedScrollIndex by remember { mutableIntStateOf(Int.MIN_VALUE) }
-    var lastSavedScrollOffset by remember { mutableIntStateOf(Int.MIN_VALUE) }
-
-    // Persist scroll state with throttling, then flush exact final position on dispose.
-    LaunchedEffect(gridState) {
-        snapshotFlow { Pair(gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }
-            .collect { (index, offset) ->
-                val shouldPersist =
-                    lastSavedScrollIndex == Int.MIN_VALUE ||
-                        index != lastSavedScrollIndex ||
-                        kotlin.math.abs(offset - lastSavedScrollOffset) >= 36
-
-                if (shouldPersist) {
-                    lastSavedScrollIndex = index
-                    lastSavedScrollOffset = offset
-                    onScrollPositionChange(index, offset)
-                }
-            }
-    }
-
-    DisposableEffect(gridState) {
-        onDispose {
-            val finalIndex = gridState.firstVisibleItemIndex
-            val finalOffset = gridState.firstVisibleItemScrollOffset
-            if (finalIndex != lastSavedScrollIndex || finalOffset != lastSavedScrollOffset) {
-                onScrollPositionChange(finalIndex, finalOffset)
-            }
-        }
-    }
+    // Saveable: the entry's saved state brings the scroll back with Back from a Details page.
+    val gridState = rememberLazyGridState()
+    // The remembered card as the grid (re)enters the screen: where entryRequester goes. Read once,
+    // so moving focus around the grid doesn't recompose it.
+    val lastFocusedIndex = remember { gridItemIndex(focusMemory.savedKey) }
     
     // Lazy pagination: load more items when scrolling near the end
     val lastVisibleIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -191,9 +164,6 @@ fun GridViewScreen(
     // Prefetch image URLs list
     val imageUrls = remember(items) { items.map { it.poster } }
     
-    // Track if focus has been restored to prevent re-triggering
-    var focusRestored by remember { mutableStateOf(false) }
-
     BackHandler {
         if (isBackIconFocused) {
             onBack()
@@ -202,15 +172,24 @@ fun GridViewScreen(
         }
     }
 
-    // Focus restoration - just request focus, no scrolling needed since grid starts at correct position
-    LaunchedEffect(lastFocusedIndex, gridState.layoutInfo.totalItemsCount) {
-        if (!focusRestored && gridState.layoutInfo.totalItemsCount > 0) {
-            // Small delay to ensure item is composed
-            kotlinx.coroutines.delay(16)
-            entryRequester.requestFocus()
-            focusRestored = true
+    // The remembered card (scrolled into view if the grid moved), else the nearest card left
+    // at its position, else the first.
+    RestoreFocusOnResume(
+        memory = focusMemory,
+        fallback = entryRequester,
+        enabled = items.isNotEmpty(),
+        scrollTo = { key ->
+            val index = gridItemIndex(key)
+            if (index != null && index in items.indices &&
+                gridState.layoutInfo.visibleItemsInfo.none { it.index == index }
+            ) {
+                gridState.scrollToItem(index)
+            }
+        },
+        neighbour = { key ->
+            gridItemIndex(key)?.takeIf { items.isNotEmpty() }?.coerceIn(0, items.lastIndex)?.let(::gridItemKey)
         }
-    }
+    )
 
     // If UP/DOWN fallback used native scroll, re-apply focus as soon as the intended target is composed.
     LaunchedEffect(gridState) {
@@ -229,6 +208,7 @@ fun GridViewScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(backgroundColor)
+            .focusMemoryRoot(focusMemory)
     ) {
         // ══════════════════════════════════════════════════════════════
         // SCROLLABLE GRID - Positioned first so header overlays it
@@ -252,7 +232,7 @@ fun GridViewScreen(
                     key = { index, item -> "${item.id}_$index" }
                 ) { index, item ->
                     
-                    val shouldRequestFocus = if (lastFocusedIndex != null) {
+                    val shouldRequestFocus = if (lastFocusedIndex != null && lastFocusedIndex in items.indices) {
                         index == lastFocusedIndex
                     } else {
                         index == 0
@@ -333,7 +313,6 @@ fun GridViewScreen(
                             .onFocusChanged {
                                 if (it.isFocused) {
                                     ImagePrefetcher.prefetchAround(context, imageUrls, index, count = 12)
-                                    onFocusChange(index)
                                     lastFocusedPosterIndex = index
                                     val pendingTarget = pendingDirectionalTargetIndex
                                     if (pendingTarget != null) {
@@ -348,6 +327,7 @@ fun GridViewScreen(
                                 }
                             }
                             .focusRequester(effectiveRequester)
+                            .restorableFocus(gridItemKey(index), focusMemory)
                     )
                 }
             }
@@ -455,3 +435,7 @@ fun GridViewScreen(
         }
     }
 }
+
+private fun gridItemKey(index: Int) = "item:$index"
+
+private fun gridItemIndex(key: String?): Int? = key?.removePrefix("item:")?.takeIf { key.startsWith("item:") }?.toIntOrNull()

@@ -41,6 +41,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.hereliesaz.illumera.ui.navigation.focus.FocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.restorableFocus
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
@@ -86,7 +91,11 @@ fun StudioDetailScreen(
 
     // Back belongs to the app's back stack (NavDisplay pops this page).
 
-    Box(modifier = Modifier.fillMaxSize().background(bg)) {
+    // This page's place in its back-stack entry: the rail card ("<rail>:<index>") that opened a
+    // title, so Back returns to it (or the nearest card left in that rail).
+    val focusMemory = rememberFocusMemory()
+
+    Box(modifier = Modifier.fillMaxSize().background(bg).focusMemoryRoot(focusMemory)) {
         when (val state = uiState) {
             is StudioDetailState.Loading -> {
                 CircularProgressIndicator(
@@ -102,20 +111,9 @@ fun StudioDetailScreen(
                 )
             }
             is StudioDetailState.Success -> {
-                val restoreFocusRequester = remember { FocusRequester() }
                 val initialFocusRequester = remember { FocusRequester() }
-                var restoreRowKey by rememberSaveable { mutableStateOf<String?>(null) }
-                var restoreIndex by rememberSaveable { mutableStateOf(-1) }
 
-                androidx.compose.runtime.LaunchedEffect(Unit) {
-                    if (restoreRowKey != null && restoreIndex >= 0) {
-                        runCatching { restoreFocusRequester.requestFocus() }
-                        restoreRowKey = null
-                        restoreIndex = -1
-                    } else {
-                        runCatching { initialFocusRequester.requestFocus() }
-                    }
-                }
+                RestoreFocusOnResume(memory = focusMemory, fallback = initialFocusRequester)
 
                 StudioContent(
                     entity = state.entity,
@@ -123,17 +121,11 @@ fun StudioDetailScreen(
                     bg = bg,
                     accentColor = accentColor,
                     textColor = textColor,
-                    onNavigateToDetails = { type, id, rowKey, index ->
-                        restoreRowKey = rowKey
-                        restoreIndex = index
-                        onNavigateToDetails(type, id)
-                    },
+                    onNavigateToDetails = { type, id, _, _ -> onNavigateToDetails(type, id) },
                     onLoadMore = { mediaType, railType ->
                         viewModel.loadMoreRail(mediaType, railType)
                     },
-                    restoreRowKey = restoreRowKey,
-                    restoreIndex = restoreIndex,
-                    restoreFocusRequester = restoreFocusRequester,
+                    focusMemory = focusMemory,
                     initialFocusRequester = initialFocusRequester
                 )
             }
@@ -151,9 +143,7 @@ private fun StudioContent(
     textColor: Color,
     onNavigateToDetails: (type: String, id: String, rowKey: String, index: Int) -> Unit,
     onLoadMore: (mediaType: String, railType: String) -> Unit,
-    restoreRowKey: String?,
-    restoreIndex: Int,
-    restoreFocusRequester: FocusRequester,
+    focusMemory: FocusMemory,
     initialFocusRequester: FocusRequester
 ) {
     val density = LocalDensity.current
@@ -197,8 +187,8 @@ private fun StudioContent(
                                     onNavigateToDetails(type, id, rowKey, index)
                                 },
                                 onLoadMore = { onLoadMore(rail.mediaType, rail.railType) },
-                                restoreIndex = if (restoreRowKey == rowKey) restoreIndex else -1,
-                                restoreFocusRequester = if (restoreRowKey == rowKey) restoreFocusRequester else null,
+                                focusMemory = focusMemory,
+                                rowKey = rowKey,
                                 initialFocusRequester = if (railIndex == 0) initialFocusRequester else null
                             )
                         }
@@ -288,8 +278,8 @@ private fun DiscoverRailSection(
     textColor: Color,
     onItemClick: (type: String, id: String, index: Int) -> Unit,
     onLoadMore: () -> Unit,
-    restoreIndex: Int = -1,
-    restoreFocusRequester: FocusRequester? = null,
+    focusMemory: FocusMemory,
+    rowKey: String,
     initialFocusRequester: FocusRequester? = null
 ) {
     val density = LocalDensity.current
@@ -345,11 +335,11 @@ private fun DiscoverRailSection(
                         PosterCard(
                             item = item,
                             accentColor = accentColor,
-                            modifier = when {
-                                restoreFocusRequester != null && index == restoreIndex -> Modifier.focusRequester(restoreFocusRequester)
-                                initialFocusRequester != null && index == 0 -> Modifier.focusRequester(initialFocusRequester)
-                                else -> Modifier
-                            }
+                            modifier = (if (initialFocusRequester != null && index == 0) {
+                                Modifier.focusRequester(initialFocusRequester)
+                            } else {
+                                Modifier
+                            }).restorableFocus("$rowKey:$index", focusMemory)
                         ) {
                             val stremioType = if (item.type == "series") "series" else "movie"
                             onItemClick(stremioType, "tmdb:${item.tmdbId}", index)

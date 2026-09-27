@@ -1,7 +1,16 @@
 package com.hereliesaz.illumera.ui.navigation
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.serialization.NavBackStackSerializer
+import androidx.savedstate.SavedState
 import androidx.savedstate.serialization.SavedStateConfiguration
+import androidx.savedstate.serialization.decodeFromSavedState
+import androidx.savedstate.serialization.encodeToSavedState
+import kotlinx.serialization.PolymorphicSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
@@ -134,6 +143,39 @@ val AppBackStackConfiguration: SavedStateConfiguration = SavedStateConfiguration
         }
     }
 }
+
+private val AppBackStackSerializer = NavBackStackSerializer(PolymorphicSerializer(NavKey::class))
+
+/** The saved-state key MainActivity's back stack is stored under. */
+internal const val APP_BACK_STACK_SAVE_KEY = "app_back_stack"
+
+/**
+ * Restores a saved back stack, or null when it can't be used: a key this version no longer
+ * has (a stack saved by an older app version, e.g. with the removed MainKey), a corrupt bundle,
+ * or a stack without a main screen at the bottom. Null means "start from a fresh Home".
+ */
+internal fun restoreAppBackStackOrNull(saved: SavedState): NavBackStack<NavKey>? {
+    val stack = try {
+        decodeFromSavedState(AppBackStackSerializer, saved, AppBackStackConfiguration)
+    } catch (_: Exception) {
+        return null
+    }
+    return stack.takeIf { it.isNotEmpty() && it.first() is MainRootKey }
+}
+
+/** Saves the back stack by [AppBackStackConfiguration]; an unusable saved stack restores to null. */
+internal val AppBackStackSaver: Saver<NavBackStack<NavKey>, SavedState> = Saver(
+    save = { encodeToSavedState(AppBackStackSerializer, it, AppBackStackConfiguration) },
+    restore = { restoreAppBackStackOrNull(it) }
+)
+
+/**
+ * MainActivity's back stack, saved across process death. A saved stack this version can't read
+ * (see [restoreAppBackStackOrNull]) gives way to a fresh Home instead of crashing or blanking.
+ */
+@Composable
+fun rememberAppBackStack(): NavBackStack<NavKey> =
+    rememberSaveable(saver = AppBackStackSaver, key = APP_BACK_STACK_SAVE_KEY) { NavBackStack<NavKey>(HomeKey()) }
 
 /**
  * Every change MainActivity makes to the back stack. Plain list operations, so the

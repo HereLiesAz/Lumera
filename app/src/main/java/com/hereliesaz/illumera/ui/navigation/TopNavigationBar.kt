@@ -97,7 +97,8 @@ fun TopNavigationBarOverlay(
     onEnterContent: () -> Unit,
     onLogout: () -> Unit = {},
     onExit: () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onBack: () -> Unit = onEnterContent
 ) {
     // 1. Define groups
     // Queue now lives inside Watchlist, so only Watchlist is exposed as a top-level tab.
@@ -129,9 +130,10 @@ fun TopNavigationBarOverlay(
     // Combined: navbar is active if either section has focus
     val isTopNavActive = isSettingsAreaFocused || isCenterAreaFocused
 
-    // BACK HANDLER: When nav is active, Back press should close it (return to content)
+    // BACK HANDLER: When nav is active, Back closes it (return to content), or follows the
+    // shell's policy (MainShell passes onBack: exit when root Back opened it).
     androidx.activity.compose.BackHandler(enabled = isTopNavActive) {
-        onEnterContent()
+        onBack()
     }
 
     // Dropdown State

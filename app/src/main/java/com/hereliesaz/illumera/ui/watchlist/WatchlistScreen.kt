@@ -1,6 +1,8 @@
 package com.hereliesaz.illumera.ui.watchlist
 
-import com.hereliesaz.illumera.ui.navigation.openNavDrawer
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
 import com.hereliesaz.illumera.ui.home.resolveRowRestoreIndex
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -89,10 +91,14 @@ fun WatchlistScreen(
         }
     }
 
-    // Main-screen Back: every in-screen Back action (Queue reorder mode, item menus) has its
-    // own handler composed later, so it runs first; only once those are exhausted does
-    // Back fall through to here and open the side menu.
-    androidx.activity.compose.BackHandler { drawerRequester.openNavDrawer() }
+    // Main-screen Back is MainRootBackHandler's: every in-screen Back action (Queue reorder
+    // mode, item menus) has its own handler composed later, so it runs first.
+
+    // The remembered card lives in WatchlistViewModel (lastFocusedKey, row states), and the
+    // rows (and the queue) attach entryRequester to it; this only triggers the restore on
+    // resume, replacing the entry's old delay(200) request.
+    val focusMemory = rememberFocusMemory()
+    RestoreFocusOnResume(memory = focusMemory, fallback = entryRequester)
 
     val upKeyDebouncer = remember { UpKeyDebouncer() }
     val dpadRepeatGate = remember { DpadRepeatGate() }
@@ -146,7 +152,7 @@ fun WatchlistScreen(
         com.hereliesaz.illumera.ui.components.LocalWatchedIds provides watchedIds
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().focusMemoryRoot(focusMemory),
             contentPadding = PaddingValues(top = topPadding + 20.dp, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {

@@ -39,20 +39,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.runtime.saveable.Saver
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.entryProvider
-import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import com.hereliesaz.illumera.data.update.AppUpdateManager
@@ -76,14 +68,14 @@ import com.hereliesaz.illumera.data.repository.IntroRepository
 import com.hereliesaz.illumera.domain.AddonSubtitle
 import com.hereliesaz.illumera.domain.DashboardTab
 import com.hereliesaz.illumera.domain.episodeDisplayTitle
-import com.hereliesaz.illumera.ui.navigation.AppBackStackConfiguration
 import com.hereliesaz.illumera.ui.navigation.BackStackOps
 import com.hereliesaz.illumera.ui.navigation.CastKey
 import com.hereliesaz.illumera.ui.navigation.DetailsKey
 import com.hereliesaz.illumera.ui.navigation.GridKey
 import com.hereliesaz.illumera.ui.navigation.HomeKey
-import com.hereliesaz.illumera.ui.navigation.MainRootKey
+import com.hereliesaz.illumera.ui.navigation.MainRootBackHandler
 import com.hereliesaz.illumera.ui.navigation.MainShell
+import com.hereliesaz.illumera.ui.navigation.rememberAppBackStack
 import com.hereliesaz.illumera.ui.navigation.MoviesKey
 import com.hereliesaz.illumera.ui.navigation.SearchKey
 import com.hereliesaz.illumera.ui.navigation.SeriesKey
@@ -116,7 +108,6 @@ import com.hereliesaz.illumera.ui.theme.LumeraTheme
 import com.hereliesaz.illumera.ui.theme.ThemeManager
 import dagger.hilt.android.AndroidEntryPoint
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.hereliesaz.illumera.data.local.AddonDao
@@ -125,7 +116,8 @@ import kotlinx.coroutines.withContext
 
 import javax.inject.Inject
 
-private const val DOUBLE_BACK_EXIT_WINDOW_MS = 400L
+/** Profile picker only: two Back presses this close together leave the app. */
+private const val PROFILE_PICKER_DOUBLE_BACK_MS = 400L
 
 private fun launchExternalPlayer(context: android.content.Context, url: String) {
     try {
@@ -440,20 +432,6 @@ private fun UpdateReadyToInstallDialog(
     }
 }
 
-/** A grid entry's focused item and scroll, read and written without recomposing the grid. */
-private class GridRestoreState(
-    var focusedIndex: Int? = null,
-    var scrollIndex: Int = 0,
-    var scrollOffset: Int = 0
-) {
-    companion object {
-        val Saver: Saver<GridRestoreState, Any> = listSaver(
-            save = { listOf(it.focusedIndex ?: -1, it.scrollIndex, it.scrollOffset) },
-            restore = { GridRestoreState(it[0].takeIf { index -> index >= 0 }, it[1], it[2]) }
-        )
-    }
-}
-
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject
@@ -604,8 +582,9 @@ class MainActivity : ComponentActivity() {
             val currentProfile by mainViewModel.activeProfile.collectAsState()
             var sessionProfileId by rememberSaveable { mutableStateOf<Int?>(null) }
             var sessionRestoreAttemptedProfileId by rememberSaveable { mutableStateOf<Int?>(null) }
-            // The root back stack (a main screen, Grid, Details, Player), saved across process death.
-            val backStack = rememberNavBackStack(AppBackStackConfiguration, HomeKey())
+            // The root back stack (a main screen, Grid, Details, Player), saved across process
+            // death. A stack saved by an older version that this one can't read starts at Home.
+            val backStack = rememberAppBackStack()
             val topKey = backStack.lastOrNull()
             // Playback state lives in the activity-scoped session, so it outlives a
             // configuration change and TorrentService's callbacks always reach it.
@@ -706,7 +685,7 @@ class MainActivity : ComponentActivity() {
                         var lastBackPressMs by remember { mutableStateOf(0L) }
                         BackHandler {
                             val now = SystemClock.uptimeMillis()
-                            if (now - lastBackPressMs < DOUBLE_BACK_EXIT_WINDOW_MS) {
+                            if (now - lastBackPressMs < PROFILE_PICKER_DOUBLE_BACK_MS) {
                                 finishAffinity()
                             } else {
                                 lastBackPressMs = now
@@ -736,10 +715,7 @@ class MainActivity : ComponentActivity() {
                         // The main screen is the root at the bottom of the back stack.
                         val currentNav = BackStackOps.currentRoot(backStack).destination
                         val showChrome = isMainAreaKey(topKey)
-                        val isMainRootTop = topKey is MainRootKey
                         val navPosition = currentProfile?.navPosition ?: "left"
-                        // Whether focus is inside Settings' content pane (vs. its section list).
-                        var settingsContentFocused by remember { mutableStateOf(false) }
 
                         // Grid items. Title and config id travel in GridKey; the items stay in
                         // memory here (MetaItem isn't saveable).
@@ -838,14 +814,22 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        // Double-back-to-exit on a main screen: two rapid back presses exit the
-                        // app (PR 5 replaces this with the settled Back policy).
-                        var lastBackPressMs by remember { mutableStateOf(0L) }
-                        val doubleBackEnabled by rememberUpdatedState(isMainRootTop && !settingsContentFocused)
-
                         // The NavDisplay keeps one place in the tree; only the menu chrome over it
-                        // changes with the top entry and the menu layout.
+                        // changes with the top entry and the menu layout. Back with the menu open:
+                        // exits when root Back opened it, closes it when Left or a swipe did.
                         val shellState = rememberMainShellState()
+
+                        // A main screen's last Back opens the menu. Registered before the screen
+                        // so the screen's own Back steps (keyboard, query, panels) run first.
+                        @Composable
+                        fun MainRoot(destination: NavDestination, content: @Composable () -> Unit) {
+                            MainRootBackHandler(
+                                state = shellState,
+                                menuRequester = drawerRequesters.getValue(destination),
+                                fallbackRequester = drawerRequesters.getValue(NavDestination.Home)
+                            )
+                            content()
+                        }
                         MainShell(
                             navPosition = navPosition,
                             showChrome = showChrome,
@@ -856,25 +840,10 @@ class MainActivity : ComponentActivity() {
                             onEnterContent = handleEnterContent,
                             onLogout = logout,
                             onExit = { finishAffinity() },
-                            state = shellState,
-                            modifier = Modifier.onPreviewKeyEvent { event ->
-                                if (!doubleBackEnabled) return@onPreviewKeyEvent false
-                                if (event.key == Key.Back && event.type == KeyEventType.KeyDown) {
-                                    val now = SystemClock.uptimeMillis()
-                                    if (now - lastBackPressMs < DOUBLE_BACK_EXIT_WINDOW_MS) {
-                                        finishAffinity()
-                                        true
-                                    } else {
-                                        lastBackPressMs = now
-                                        false
-                                    }
-                                } else {
-                                    false
-                                }
-                            }
+                            state = shellState
                         ) {
                         // Back pops one entry. At a main root alone Back is not NavDisplay's: the
-                        // screens, the menu and double-back-exit keep it.
+                        // screen, then MainRootBackHandler, then the open menu keep it.
                         // No transitions, so a leaving player disposes (saving progress and
                         // releasing the decoder) at once, as before.
                         NavDisplay(
@@ -890,59 +859,30 @@ class MainActivity : ComponentActivity() {
                             popTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                             predictivePopTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                             entryProvider = entryProvider {
-                            entry<HomeKey> { HomeTabEntry(it.destination) }
-                            entry<MoviesKey> { HomeTabEntry(it.destination) }
-                            entry<SeriesKey> { HomeTabEntry(it.destination) }
-                            entry<SearchKey> {
+                            entry<HomeKey> { MainRoot(it.destination) { HomeTabEntry(it.destination) } }
+                            entry<MoviesKey> { MainRoot(it.destination) { HomeTabEntry(it.destination) } }
+                            entry<SeriesKey> { MainRoot(it.destination) { HomeTabEntry(it.destination) } }
+                            entry<SearchKey> { MainRoot(it.destination) {
                                 // SearchViewModel belongs to this entry: the query and results
                                 // outlive the Details pages opened from them, and choosing Search
-                                // in the menu starts a new search.
-                                val searchMoviesViewMoreRequester = remember { FocusRequester() }
-                                val searchSeriesViewMoreRequester = remember { FocusRequester() }
-                                val searchResultsRequester = remember { FocusRequester() }
-                                var searchFocusTarget by rememberSaveable { mutableStateOf<String?>(null) }
-                                var searchLastFocusedId by rememberSaveable { mutableStateOf<String?>(null) }
-                                LaunchedEffect(Unit) {
-                                    delay(200) // Increased for stability
-                                    val target = searchFocusTarget
-                                    searchFocusTarget = null
-                                    runCatching {
-                                        when (target) {
-                                            "movies" -> searchMoviesViewMoreRequester.requestFocus()
-                                            "series" -> searchSeriesViewMoreRequester.requestFocus()
-                                            "poster" -> searchResultsRequester.requestFocus()
-                                            else -> searchEntryRequester.requestFocus()
-                                        }
-                                    }
-                                }
+                                // in the menu starts a new search. Its FocusMemory (in the entry's
+                                // saved state) brings focus back to the poster or "view more" that
+                                // opened the page above it.
                                 val searchHomeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
                                 SearchScreen(
                                     currentProfile = currentProfile,
                                     watchedIds = searchHomeVm.state.collectAsState().value.watchedIds,
-                                    onMovieClick = { movie ->
-                                        searchFocusTarget = "poster"
-                                        openDetailsFor(movie)
-                                    },
+                                    onMovieClick = openDetailsFor,
                                     onViewMore = { title, items ->
-                                        searchFocusTarget = if (title == "Movies") "movies" else "series"
                                         gridViewItems = items
                                         BackStackOps.openGrid(backStack, title, "")
                                     },
-                                    moviesViewMoreRequester = searchMoviesViewMoreRequester,
-                                    seriesViewMoreRequester = searchSeriesViewMoreRequester,
-                                    resultsRequester = searchResultsRequester,
-                                    lastFocusedId = searchLastFocusedId,
-                                    onFocusedIdChange = { searchLastFocusedId = it },
                                     entryRequester = searchEntryRequester,
                                     drawerRequester = drawerRequesters.getValue(NavDestination.Search)
                                 )
-                            }
-                            entry<WatchlistKey> {
+                            } }
+                            entry<WatchlistKey> { MainRoot(it.destination) {
                                 // WatchlistViewModel and DebridLibraryViewModel belong to this entry.
-                                LaunchedEffect(Unit) {
-                                    delay(200)
-                                    runCatching { watchlistEntryRequester.requestFocus() }
-                                }
                                 val watchlistHomeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
                                 WatchlistScreen(
                                     currentProfile = currentProfile,
@@ -952,15 +892,10 @@ class MainActivity : ComponentActivity() {
                                     onMovieClick = openDetailsFor,
                                     onPlayResolvedStream = onPlayResolvedStream
                                 )
-                            }
-                            entry<SettingsKey> {
+                            } }
+                            entry<SettingsKey> { MainRoot(it.destination) {
                                 // Settings keeps the activity's ViewModels: its theme pages share
                                 // the activity's ThemeManager, which holds the live theme.
-                                DisposableEffect(Unit) { onDispose { settingsContentFocused = false } }
-                                LaunchedEffect(Unit) {
-                                    delay(200) // Increased for stability
-                                    runCatching { settingsEntryRequester.requestFocus() }
-                                }
                                 CompositionLocalProvider(LocalViewModelStoreOwner provides this@MainActivity) {
                                     val homeVm = hiltViewModel<HomeViewModel>()
                                     SettingsScreen(
@@ -972,11 +907,10 @@ class MainActivity : ComponentActivity() {
                                         },
                                         entryRequester = settingsEntryRequester,
                                         drawerRequester = drawerRequesters.getValue(NavDestination.Settings),
-                                        onDashboardChanged = { homeVm.invalidate() },
-                                        onContentFocusChanged = { settingsContentFocused = it }
+                                        onDashboardChanged = { homeVm.invalidate() }
                                     )
                                 }
-                            }
+                            } }
                             entry<GridKey> { gridKey ->
                             // The grid pages through the activity's HomeViewModel rows.
                             CompositionLocalProvider(LocalViewModelStoreOwner provides this@MainActivity) {
@@ -993,26 +927,17 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             val gridVm = hiltViewModel<HomeViewModel>()
-                            // This grid's place, kept while Details pages open over it and
-                            // dropped with the entry.
-                            val gridRestoreState = rememberSaveable(saver = GridRestoreState.Saver) { GridRestoreState() }
+                            // The grid keeps its place (a saveable grid state and its FocusMemory)
+                            // in this entry while Details pages open over it; it goes with the entry.
                             GridViewScreen(
                                 title = gridViewTitle,
                                 items = gridViewItems,
-                                lastFocusedIndex = gridRestoreState.focusedIndex,
-                                onFocusChange = { gridRestoreState.focusedIndex = it },
                                 onMovieClick = openDetailsFor,
                                 onBack = { BackStackOps.pop(backStack) },
                                 onLoadMore = {
                                     if (gridViewConfigId.isNotEmpty()) {
                                         gridVm.loadMoreItems(gridViewConfigId)
                                     }
-                                },
-                                initialScrollIndex = gridRestoreState.scrollIndex,
-                                initialScrollOffset = gridRestoreState.scrollOffset,
-                                onScrollPositionChange = { index, offset ->
-                                    gridRestoreState.scrollIndex = index
-                                    gridRestoreState.scrollOffset = offset
                                 },
                                 watchedIds = gridVm.state.collectAsState().value.watchedIds,
                                 externalEntryRequester = gridEntryRequester

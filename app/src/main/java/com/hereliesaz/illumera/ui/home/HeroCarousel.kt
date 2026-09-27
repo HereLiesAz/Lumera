@@ -18,6 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.hereliesaz.illumera.ui.navigation.focus.LocalFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.restorableFocusIfTracked
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -170,6 +172,7 @@ fun HeroCarousel(
             .fillMaxWidth()
             .height(420.dp)
             .then(if (entryRequester != null) Modifier.focusRequester(entryRequester) else Modifier)
+            .restorableFocusIfTracked("hero", LocalFocusMemory.current)
             .then(upBlockModifier)
             .onFocusChanged { hasFocus = it.isFocused || it.hasFocus }
             .onPreviewKeyEvent { event ->

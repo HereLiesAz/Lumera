@@ -23,6 +23,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.hereliesaz.illumera.ui.navigation.focus.LocalFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.restorableFocusIfTracked
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -184,6 +186,7 @@ fun HubRow(
                     val focusModifier = Modifier
                         .then(if (shouldRequestFocus) Modifier.focusRequester(entryRequester) else Modifier)
                         .then(if (pivotFocusRequester != null && index == listState.firstVisibleItemIndex) Modifier.focusRequester(pivotFocusRequester) else Modifier)
+                        .restorableFocusIfTracked("hub_$uniqueKey", LocalFocusMemory.current)
 
                     Box(
                         modifier = Modifier

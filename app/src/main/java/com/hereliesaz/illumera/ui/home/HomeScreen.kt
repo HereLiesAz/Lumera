@@ -1,7 +1,10 @@
 package com.hereliesaz.illumera.ui.home
 
-import com.hereliesaz.illumera.ui.navigation.openNavDrawer
-import androidx.activity.compose.BackHandler
+import com.hereliesaz.illumera.ui.navigation.focus.FocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.LocalFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Spring
@@ -147,33 +150,26 @@ fun HomeScreen(
     val rowScrollPositions = if (isCurrentTabLoaded) viewModel.getRowScrollPositions() else emptyMap()
     val verticalScrollPosition = if (isCurrentTabLoaded) viewModel.getVerticalScrollPosition() else Pair(0, 0)
 
-    // Track if content has focus to conditionally enable BackHandler
-    var isContentFocused by remember { mutableStateOf(false) }
-    // Guards against double-back race: when returning from details, focus restoration
-    // takes ~200ms. Until focus is established, keep BackHandler enabled so a quick
-    // second back press doesn't exit the app. Resets on each fresh composition.
-    var focusEverSet by remember { mutableStateOf(false) }
-
-    // Only enable explicit back handling if:
-    // 1. We are in Side-Nav mode (Always handle)
-    // 2. We are in Top-Nav mode AND content is focused (Handle = Open Nav)
-    // 3. Top-Nav mode AND focus not yet established (transition guard)
-    // If Top-Nav mode AND content is NOT focused AND focus was already set, disable this
-    // handler so TopNavigationBar's handler can "Close Nav" (return to content).
-    BackHandler(enabled = !isTopNav || isContentFocused || !focusEverSet) {
-        drawerRequester.openNavDrawer()
-    }
+    // Back is the main-root Back (MainRootBackHandler): Home has no in-screen Back steps.
+    // The viewer's place (focused row item, row and vertical scroll) lives in the shared
+    // HomeViewModel, since rows recycle and refresh, and the rows attach entryRequester to the
+    // remembered item (or its nearest neighbour, resolveRowRestoreIndex). This FocusMemory is
+    // the trigger: it restores on resume, and when a refresh re-keys or drops the focused card
+    // it goes back to that card's key (or the row's nearest card) before entryRequester.
+    val focusMemory = rememberFocusMemory()
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .onFocusChanged {
-                isContentFocused = it.hasFocus
-                if (it.hasFocus) focusEverSet = true
-            }
+            .focusMemoryRoot(focusMemory)
     ) {
         LumeraBackground {
-        CompositionLocalProvider(com.hereliesaz.illumera.ui.components.LocalWatchedIds provides state.watchedIds) {
+        CompositionLocalProvider(
+            com.hereliesaz.illumera.ui.components.LocalWatchedIds provides state.watchedIds,
+            // The rows tag their cards with their focus keys, so a refresh that re-keys or drops
+            // the focused card can put focus back on it (or its neighbour).
+            LocalFocusMemory provides focusMemory
+        ) {
         // LOGIC: If we are just starting OR the ViewModel is loading, show the Loading Box.
         // This box accepts focus immediately, which forces the NavDrawer to collapse.
         if (state.isLoading || state.loadedScreen != screenName || state.loadedProfileId != currentProfile?.id) {
@@ -205,6 +201,7 @@ fun HomeScreen(
                     onLoadMore = { configId -> viewModel.loadMoreItems(configId) },
                     entryRequester = entryRequester,
                     drawerRequester = drawerRequester,
+                    focusMemory = focusMemory,
                     lastFocusedKey = lastFocusedKey,
                     rowScrollPositions = rowScrollPositions,
                     verticalScrollPosition = verticalScrollPosition,
@@ -237,6 +234,7 @@ fun HomeScreen(
                     onLoadMore = { configId -> viewModel.loadMoreItems(configId) },
                     entryRequester = entryRequester,
                     drawerRequester = drawerRequester,
+                    focusMemory = focusMemory,
                     lastFocusedKey = lastFocusedKey,
                     rowScrollPositions = rowScrollPositions,
                     verticalScrollPosition = verticalScrollPosition,
@@ -270,6 +268,7 @@ fun CinematicLayout(
     onLoadMore: (String) -> Unit,
     entryRequester: FocusRequester,
     drawerRequester: FocusRequester,
+    focusMemory: FocusMemory,
     lastFocusedKey: String?,
     rowScrollPositions: Map<String, Pair<Int, Int>>,
     verticalScrollPosition: Pair<Int, Int>,
@@ -282,7 +281,6 @@ fun CinematicLayout(
 ) {
     var instantFocusItem by remember { mutableStateOf<MetaItem?>(null) }
     var displayedItem by remember { mutableStateOf<MetaItem?>(null) }
-    var hasRequestedFocus by remember { mutableStateOf(false) }
     val previewUpdateGate = remember { PreviewUpdateGate() }
 
     // Cache the history items transformation to avoid allocating new list on every recomposition
@@ -338,15 +336,16 @@ fun CinematicLayout(
                 onPreviewItemVisible(first)
             }
         }
-
-        // SMART FOCUS:
-        // We are now safe to request focus because HomeScreen ensures we only reach here when data is ready.
-        if (!hasRequestedFocus && (historyItems.isNotEmpty() || state.mixedRows.isNotEmpty())) {
-            delay(100)
-            entryRequester.requestFocus()
-            hasRequestedFocus = true
-        }
     }
+
+    // Focus the remembered item (entryRequester follows it) once there is something to focus:
+    // on resume, and again if a refresh takes the focused card away.
+    RestoreFocusOnResume(
+        memory = focusMemory,
+        fallback = entryRequester,
+        enabled = historyItems.isNotEmpty() || state.mixedRows.isNotEmpty(),
+        neighbour = { resolveHomeFocusNeighbour(it, focusMemory.registeredKeys) }
+    )
 
     LaunchedEffect(instantFocusItem) {
         val target = instantFocusItem ?: return@LaunchedEffect
@@ -944,6 +943,7 @@ fun SimpleLayout(
     onLoadMore: (String) -> Unit,
     entryRequester: FocusRequester,
     drawerRequester: FocusRequester,
+    focusMemory: FocusMemory,
     lastFocusedKey: String?,
     rowScrollPositions: Map<String, Pair<Int, Int>>,
     verticalScrollPosition: Pair<Int, Int>,
@@ -954,7 +954,6 @@ fun SimpleLayout(
     onHeroItemVisible: (MetaItem) -> Unit,
     isLandscapeContinueWatching: Boolean = false
 ) {
-    var hasRequestedFocus by remember { mutableStateOf(false) }
     // Stable key: only rebuild when items/order/watched-state change, not when images update
     val historyKey = remember(state.history) {
         state.history.map { "${it.id}:${it.watched}:${it.lastWatched}:${it.poster != null}" }
@@ -988,13 +987,14 @@ fun SimpleLayout(
     // Focus requester for the first row's pivot item (used by hero carousel DOWN key)
     val firstRowPivotRequester = remember { FocusRequester() }
 
-    LaunchedEffect(state.rows, historyItems) {
-        if (!hasRequestedFocus && (state.rows.isNotEmpty() || historyItems.isNotEmpty())) {
-            delay(100)
-            entryRequester.requestFocus()
-            hasRequestedFocus = true
-        }
-    }
+    // Focus the remembered item (entryRequester follows it) once there is something to focus:
+    // on resume, and again if a refresh takes the focused card away.
+    RestoreFocusOnResume(
+        memory = focusMemory,
+        fallback = entryRequester,
+        enabled = state.rows.isNotEmpty() || historyItems.isNotEmpty(),
+        neighbour = { resolveHomeFocusNeighbour(it, focusMemory.registeredKeys) }
+    )
 
     // Smooth vertical scrolling pivot for Simple layout
     val density = LocalDensity.current
@@ -1454,4 +1454,38 @@ private fun HomeImdbBadge() {
 private fun extractHomePrimaryYear(releaseInfo: String?): String {
     if (releaseInfo.isNullOrBlank()) return "----"
     return Regex("\\d{4}").find(releaseInfo)?.value ?: releaseInfo.take(4)
+}
+
+/**
+ * Where focus goes when the card keyed [savedKey] ("<row>_<id>_<index>", or "hub_<group>_<index>")
+ * is no longer on screen, among the tagged cards composed now ([keys]): the same title in the
+ * same row (it moved), else the row's card nearest its old position. Like resolveRowRestoreIndex,
+ * never "the first card" unless that is the neighbour. Null when the row has nothing composed.
+ */
+internal fun resolveHomeFocusNeighbour(savedKey: String, keys: Collection<String>): String? {
+    val savedIndex = savedKey.substringAfterLast('_', "").toIntOrNull() ?: return null
+    val group: String
+    val savedId: String?
+    if (savedKey.startsWith("hub_")) {
+        group = savedKey.substringBeforeLast('_')
+        savedId = null
+    } else {
+        group = savedKey.substringBefore('_')
+        savedId = savedKey.removePrefix("${group}_").substringBeforeLast('_')
+    }
+    val candidates = keys.mapNotNull { key ->
+        if (key == savedKey || key.startsWith("hub_") != savedKey.startsWith("hub_")) return@mapNotNull null
+        val index = key.substringAfterLast('_', "").toIntOrNull() ?: return@mapNotNull null
+        if (savedId == null) {
+            if (key.substringBeforeLast('_') != group) return@mapNotNull null
+            Triple(key, null as String?, index)
+        } else {
+            if (key.substringBefore('_') != group) return@mapNotNull null
+            Triple(key, key.removePrefix("${group}_").substringBeforeLast('_'), index)
+        }
+    }
+    val sameTitle = if (savedId != null) candidates.filter { it.second == savedId } else emptyList()
+    return sameTitle.ifEmpty { candidates }
+        .minWithOrNull(compareBy<Triple<String, String?, Int>> { kotlin.math.abs(it.third - savedIndex) }.thenBy { it.third })
+        ?.first
 }

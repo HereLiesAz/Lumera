@@ -50,6 +50,8 @@ import com.hereliesaz.illumera.ui.components.LumeraCard
 import com.hereliesaz.illumera.ui.components.LocalWatchedIds
 import com.hereliesaz.illumera.ui.components.LumeraLandscapeCard
 import com.hereliesaz.illumera.ui.utils.ImagePrefetcher
+import com.hereliesaz.illumera.ui.navigation.focus.LocalFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.restorableFocusIfTracked
 import kotlinx.coroutines.delay
 
 private fun GridRowItem.restoreId(): String = when (this) {
@@ -468,7 +470,7 @@ private fun LinearContent(
                             if (shouldRequestFocus) Modifier.focusRequester(entryRequester)
                             else if (pivotFocusRequester != null && index == listState.firstVisibleItemIndex) Modifier.focusRequester(pivotFocusRequester)
                             else Modifier
-                        )
+                        ).restorableFocusIfTracked(uniqueKey, LocalFocusMemory.current)
                     )
                 } else {
                     val watchedIds = LocalWatchedIds.current
@@ -488,7 +490,7 @@ private fun LinearContent(
                             if (shouldRequestFocus) Modifier.focusRequester(entryRequester)
                             else if (pivotFocusRequester != null && index == listState.firstVisibleItemIndex) Modifier.focusRequester(pivotFocusRequester)
                             else Modifier
-                        )
+                        ).restorableFocusIfTracked(uniqueKey, LocalFocusMemory.current)
                     )
                 }
             }
@@ -717,7 +719,7 @@ private fun InfiniteGridContent(
                                 if (shouldRequestFocus) Modifier.focusRequester(entryRequester)
                                 else if (pivotFocusRequester != null && scrollIndex == listState.firstVisibleItemIndex) Modifier.focusRequester(pivotFocusRequester)
                                 else Modifier
-                            )
+                            ).restorableFocusIfTracked(uniqueKey, LocalFocusMemory.current)
                         )
                     }
                 }
@@ -747,6 +749,7 @@ private fun InfiniteGridContent(
                                     Modifier.focusRequester(pivotFocusRequester)
                                 } else Modifier
                             )
+                            .restorableFocusIfTracked(uniqueKey, LocalFocusMemory.current)
                     )
                 }
             }
@@ -925,7 +928,7 @@ private fun FiniteGridContent(
                                 if (shouldRequestFocus) Modifier.focusRequester(entryRequester)
                                 else if (pivotFocusRequester != null && index == listState.firstVisibleItemIndex) Modifier.focusRequester(pivotFocusRequester)
                                 else Modifier
-                            )
+                            ).restorableFocusIfTracked(uniqueKey, LocalFocusMemory.current)
                         )
                     }
                 }
@@ -973,6 +976,7 @@ private fun FiniteGridContent(
                                         Modifier.focusRequester(pivotFocusRequester)
                                     } else Modifier
                                 )
+                                .restorableFocusIfTracked(uniqueKey, LocalFocusMemory.current)
                         )
                     }
                 }

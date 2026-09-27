@@ -56,7 +56,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusDirection
@@ -118,6 +117,11 @@ import androidx.compose.ui.platform.LocalDensity
 import com.hereliesaz.illumera.R
 import com.hereliesaz.illumera.ui.home.DpadRepeatGate
 import com.hereliesaz.illumera.ui.home.FocusPivotSpec
+import com.hereliesaz.illumera.ui.navigation.focus.FocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.restorableFocus
 import com.hereliesaz.illumera.data.tmdb.TmdbCastInfo
 import com.hereliesaz.illumera.data.tmdb.TmdbCompanyInfo
 import com.hereliesaz.illumera.data.tmdb.TmdbMetaPreview
@@ -228,7 +232,10 @@ fun DetailsScreen(
 
     val firstButtonFocusRequester = remember { FocusRequester() }
     val episodesButtonFocusRequester = remember { FocusRequester() }
-    val restoreFocusRequester = remember { FocusRequester() }
+    // This page's place, kept in its back-stack entry: the hero button ("hero:<name>") or row
+    // card ("<row>:<index>") that last had focus, i.e. the one that opened the player, a cast
+    // or studio page, or another title.
+    val focusMemory = rememberFocusMemory()
 
     // Track the previous sidebar state so we can restore focus to the
     // episodes button when the episodes sidebar closes.
@@ -240,8 +247,6 @@ fun DetailsScreen(
         }
         previousSidebarState = sidebarState
     }
-    var restoreRowKey by rememberSaveable { mutableStateOf<String?>(null) }
-    var restoreIndex by rememberSaveable { mutableStateOf(-1) }
     val listState = rememberLazyListState()
 
     // Hero content (title, art, description, buttons) only needs the addon meta fetch —
@@ -274,19 +279,14 @@ fun DetailsScreen(
         }
     }
 
-    LaunchedEffect(contentReady) {
-        if (contentReady) {
-            if (restoreRowKey != null) {
-                // Back to this page (its entry kept the saveable state): restore focus
-                runCatching { restoreFocusRequester.requestFocus() }
-                restoreRowKey = null
-                restoreIndex = -1
-            } else {
-                // First load: focus hero button
-                runCatching { firstButtonFocusRequester.requestFocus() }
-            }
-        }
-    }
+    // First load: the Play button. Back to this page (from the player, a cast or studio page,
+    // another title): the button or card that left it; a card that is gone gives way to its
+    // row's nearest card, then to Play.
+    RestoreFocusOnResume(
+        memory = focusMemory,
+        fallback = firstButtonFocusRequester,
+        enabled = contentReady
+    )
 
     // Smooth content reveal: animate alpha from 0→1 when content becomes ready
     val contentAlpha by animateFloatAsState(
@@ -306,7 +306,7 @@ fun DetailsScreen(
         label = "details_background_blur"
     )
 
-    Box(modifier = Modifier.fillMaxSize().background(bg)) {
+    Box(modifier = Modifier.fillMaxSize().background(bg).focusMemoryRoot(focusMemory)) {
         // Loading sweep — solid bg with subtle light sweep while data loads
         if (!contentReady) {
             if (state.isLoading) {
@@ -593,7 +593,9 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = playLabel,
                             icon = Icons.Default.PlayArrow,
-                            modifier = Modifier.focusRequester(firstButtonFocusRequester),
+                            modifier = Modifier
+                                .focusRequester(firstButtonFocusRequester)
+                                .restorableFocus("hero:play", focusMemory),
                             onClick = {
                                 if (!state.isResumeStateReady) return@ExpandableIconButton
                                 val ep = resumeEpisode ?: firstEpisode ?: return@ExpandableIconButton
@@ -616,13 +618,16 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = "Episodes",
                             icon = Icons.AutoMirrored.Filled.List,
-                            modifier = Modifier.focusRequester(episodesButtonFocusRequester),
+                            modifier = Modifier
+                                .focusRequester(episodesButtonFocusRequester)
+                                .restorableFocus("hero:episodes", focusMemory),
                             onClick = { viewModel.openEpisodes() }
                         )
 
                         ExpandableIconButton(
                             label = "Add next episode to queue",
                             icon = Icons.Default.Add,
+                            modifier = Modifier.restorableFocus("hero:queue_next", focusMemory),
                             onClick = {
                                 val ep = resumeEpisode ?: firstEpisode ?: return@ExpandableIconButton
                                 onAddToQueue(
@@ -642,6 +647,7 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = "Queue whole show",
                             icon = Icons.AutoMirrored.Filled.List,
+                            modifier = Modifier.restorableFocus("hero:queue_show", focusMemory),
                             onClick = {
                                 onAddToQueue(
                                     QueueItem(
@@ -659,6 +665,7 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = "Sources",
                             icon = Icons.Default.Dns,
+                            modifier = Modifier.restorableFocus("hero:sources", focusMemory),
                             onClick = {
                                 val ep = resumeEpisode ?: firstEpisode ?: return@ExpandableIconButton
                                 val trackId = resumePlaybackId ?: episodePlaybackId(streamId, ep)
@@ -682,6 +689,7 @@ fun DetailsScreen(
                             ExpandableIconButton(
                                 label = "Trailer",
                                 icon = Icons.Default.Videocam,
+                                modifier = Modifier.restorableFocus("hero:trailer", focusMemory),
                                 onClick = { onTrailerClick(seriesTrailer.key, seriesTrailer.name) }
                             )
                         }
@@ -690,6 +698,7 @@ fun DetailsScreen(
                             ExpandableIconButton(
                                 label = "Soundtrack",
                                 icon = Icons.Default.MusicNote,
+                                modifier = Modifier.restorableFocus("hero:soundtrack", focusMemory),
                                 onClick = { showSoundtrack = true }
                             )
                         }
@@ -697,6 +706,7 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = if (isInWatchlist) "Watchlisted" else "Add to watchlist",
                             icon = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            modifier = Modifier.restorableFocus("hero:watchlist", focusMemory),
                             isActive = isInWatchlist,
                             onClick = { viewModel.toggleWatchlist() }
                         )
@@ -705,6 +715,7 @@ fun DetailsScreen(
                             ExpandableIconButton(
                                 label = "Clear Progress",
                                 icon = Icons.Default.Close,
+                                modifier = Modifier.restorableFocus("hero:clear_progress", focusMemory),
                                 onClick = { showClearProgressDialog = true }
                             )
                         }
@@ -726,7 +737,9 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = if (!state.isResumeStateReady) "Loading…" else if (resumePlaybackId != null) "Resume" else "Play Movie",
                             icon = Icons.Default.PlayArrow,
-                            modifier = Modifier.focusRequester(firstButtonFocusRequester),
+                            modifier = Modifier
+                                .focusRequester(firstButtonFocusRequester)
+                                .restorableFocus("hero:play", focusMemory),
                             onClick = {
                                 if (!state.isResumeStateReady) return@ExpandableIconButton
                             pendingPlaybackId = streamId
@@ -739,6 +752,7 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = "Sources",
                             icon = Icons.Default.Dns,
+                            modifier = Modifier.restorableFocus("hero:sources", focusMemory),
                             onClick = {
                                 pendingPlaybackId = streamId
                                 pendingPlaybackType = type
@@ -752,6 +766,7 @@ fun DetailsScreen(
                             ExpandableIconButton(
                                 label = "Trailer",
                                 icon = Icons.Default.Videocam,
+                                modifier = Modifier.restorableFocus("hero:trailer", focusMemory),
                                 onClick = { onTrailerClick(movieTrailer.key, movieTrailer.name) }
                             )
                         }
@@ -760,6 +775,7 @@ fun DetailsScreen(
                             ExpandableIconButton(
                                 label = "Soundtrack",
                                 icon = Icons.Default.MusicNote,
+                                modifier = Modifier.restorableFocus("hero:soundtrack", focusMemory),
                                 onClick = { showSoundtrack = true }
                             )
                         }
@@ -767,6 +783,7 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = "Add to queue",
                             icon = Icons.Default.Add,
+                            modifier = Modifier.restorableFocus("hero:queue", focusMemory),
                             onClick = {
                                 onAddToQueue(
                                     QueueItem(
@@ -782,6 +799,7 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = if (state.isMovieWatched) "Watched" else "Mark as watched",
                             icon = if (state.isMovieWatched) Icons.Default.Check else Icons.Default.Add,
+                            modifier = Modifier.restorableFocus("hero:watched", focusMemory),
                             isActive = state.isMovieWatched,
                             onClick = { viewModel.toggleMovieWatched() }
                         )
@@ -789,6 +807,7 @@ fun DetailsScreen(
                         ExpandableIconButton(
                             label = if (isInWatchlist) "Watchlisted" else "Add to watchlist",
                             icon = if (isInWatchlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            modifier = Modifier.restorableFocus("hero:watchlist", focusMemory),
                             isActive = isInWatchlist,
                             onClick = { viewModel.toggleWatchlist() }
                         )
@@ -797,6 +816,7 @@ fun DetailsScreen(
                             ExpandableIconButton(
                                 label = "Clear Progress",
                                 icon = Icons.Default.Close,
+                                modifier = Modifier.restorableFocus("hero:clear_progress", focusMemory),
                                 onClick = { showClearProgressDialog = true }
                             )
                         }
@@ -851,13 +871,11 @@ fun DetailsScreen(
                             Spacer(modifier = Modifier.height(10.dp))
                             CastRow(
                                 leadingCrew, castMembers, accentColor, textColor,
-                                onPersonClick = { personId, personName, rowIndex ->
-                                    restoreRowKey = "tmdb_cast"
-                                    restoreIndex = rowIndex
+                                onPersonClick = { personId, personName, _ ->
                                     onNavigateToCastDetail(personId, personName)
                                 },
-                                restoreIndex = if (restoreRowKey == "tmdb_cast") restoreIndex else -1,
-                                restoreFocusRequester = if (restoreRowKey == "tmdb_cast") restoreFocusRequester else null
+                                focusMemory = focusMemory,
+                                rowKey = "tmdb_cast"
                             )
                         }
                     }
@@ -885,12 +903,10 @@ fun DetailsScreen(
                             StudioRow(
                                 firstStudios, textColor, accentColor,
                                 onStudioClick = { studioId, studioName ->
-                                    restoreRowKey = "tmdb_studios_first"
-                                    restoreIndex = firstStudios.indexOfFirst { it.tmdbId == studioId }
                                     onNavigateToStudioDetail(studioId, firstStudioKind, studioName, type)
                                 },
-                                restoreIndex = if (restoreRowKey == "tmdb_studios_first") restoreIndex else -1,
-                                restoreFocusRequester = if (restoreRowKey == "tmdb_studios_first") restoreFocusRequester else null
+                                focusMemory = focusMemory,
+                                rowKey = "tmdb_studios_first"
                             )
                         }
                     }
@@ -904,12 +920,10 @@ fun DetailsScreen(
                             StudioRow(
                                 secondStudios, textColor, accentColor,
                                 onStudioClick = { studioId, studioName ->
-                                    restoreRowKey = "tmdb_studios_second"
-                                    restoreIndex = secondStudios.indexOfFirst { it.tmdbId == studioId }
                                     onNavigateToStudioDetail(studioId, secondStudioKind, studioName, type)
                                 },
-                                restoreIndex = if (restoreRowKey == "tmdb_studios_second") restoreIndex else -1,
-                                restoreFocusRequester = if (restoreRowKey == "tmdb_studios_second") restoreFocusRequester else null
+                                focusMemory = focusMemory,
+                                rowKey = "tmdb_studios_second"
                             )
                         }
                     }
@@ -923,13 +937,10 @@ fun DetailsScreen(
                             RecommendationRow(
                                         tmdbRecommendations, accentColor,
                                         rowKey = "tmdb_recs",
-                                        onItemClick = { navType, navId, rowKey, index ->
-                                            restoreRowKey = rowKey
-                                            restoreIndex = index
+                                        onItemClick = { navType, navId, _, _ ->
                                             onNavigateToDetails(navType, navId)
                                         },
-                                        restoreIndex = if (restoreRowKey == "tmdb_recs") restoreIndex else -1,
-                                        restoreFocusRequester = if (restoreRowKey == "tmdb_recs") restoreFocusRequester else null
+                                        focusMemory = focusMemory
                                     )
                         }
                     }
@@ -944,13 +955,10 @@ fun DetailsScreen(
                             RecommendationRow(
                                             tmdbCollection, accentColor,
                                             rowKey = "tmdb_collection",
-                                            onItemClick = { navType, navId, rowKey, index ->
-                                                restoreRowKey = rowKey
-                                                restoreIndex = index
+                                            onItemClick = { navType, navId, _, _ ->
                                                 onNavigateToDetails(navType, navId)
                                             },
-                                            restoreIndex = if (restoreRowKey == "tmdb_collection") restoreIndex else -1,
-                                            restoreFocusRequester = if (restoreRowKey == "tmdb_collection") restoreFocusRequester else null
+                                            focusMemory = focusMemory
                                         )
                         }
                     }
@@ -1226,6 +1234,10 @@ private fun ImdbBadge() {
 
 // ── TMDB Section Components ──
 
+/** A row card's FocusMemory tag, "<row>:<index>", so Back returns to it (or its row neighbour). */
+private fun rowItemFocus(memory: FocusMemory?, rowKey: String, index: Int): Modifier =
+    if (memory == null) Modifier else Modifier.restorableFocus("$rowKey:$index", memory)
+
 @Composable
 private fun SectionHeader(title: String, textColor: Color, modifier: Modifier = Modifier) {
     Text(
@@ -1244,8 +1256,8 @@ private fun CastRow(
     accentColor: Color,
     textColor: Color,
     onPersonClick: (personId: Int, personName: String, rowIndex: Int) -> Unit = { _, _, _ -> },
-    restoreIndex: Int = -1,
-    restoreFocusRequester: FocusRequester? = null
+    focusMemory: FocusMemory? = null,
+    rowKey: String = "tmdb_cast"
 ) {
     val rowState = rememberLazyListState()
     val repeatGate = remember { DpadRepeatGate(horizontalRepeatIntervalMs = 150L) }
@@ -1279,7 +1291,7 @@ private fun CastRow(
                 }) {
                     CastCard(
                         member, accentColor, textColor,
-                        modifier = if (restoreFocusRequester != null && index == restoreIndex) Modifier.focusRequester(restoreFocusRequester) else Modifier
+                        modifier = rowItemFocus(focusMemory, rowKey, index)
                     ) {
                         member.tmdbId?.let { id -> onPersonClick(id, member.name, index) }
                     }
@@ -1313,7 +1325,7 @@ private fun CastRow(
                 }) {
                     CastCard(
                         member, accentColor, textColor,
-                        modifier = if (restoreFocusRequester != null && flatIndex == restoreIndex) Modifier.focusRequester(restoreFocusRequester) else Modifier
+                        modifier = rowItemFocus(focusMemory, rowKey, flatIndex)
                     ) {
                         member.tmdbId?.let { id -> onPersonClick(id, member.name, flatIndex) }
                     }
@@ -1395,8 +1407,8 @@ private fun StudioRow(
     textColor: Color,
     accentColor: Color,
     onStudioClick: (tmdbId: Int, name: String) -> Unit = { _, _ -> },
-    restoreIndex: Int = -1,
-    restoreFocusRequester: FocusRequester? = null
+    focusMemory: FocusMemory? = null,
+    rowKey: String = ""
 ) {
     val rowState = rememberLazyListState()
     val repeatGate = remember { DpadRepeatGate(horizontalRepeatIntervalMs = 150L) }
@@ -1426,7 +1438,7 @@ private fun StudioRow(
                 }) {
                     StudioChip(
                         studio, textColor, accentColor,
-                        modifier = if (restoreFocusRequester != null && index == restoreIndex) Modifier.focusRequester(restoreFocusRequester) else Modifier
+                        modifier = rowItemFocus(focusMemory, rowKey, index)
                     ) {
                         studio.tmdbId?.let { id -> onStudioClick(id, studio.name) }
                     }
@@ -1487,8 +1499,7 @@ private fun RecommendationRow(
     accentColor: Color,
     rowKey: String = "",
     onItemClick: (type: String, id: String, rowKey: String, index: Int) -> Unit = { _, _, _, _ -> },
-    restoreIndex: Int = -1,
-    restoreFocusRequester: FocusRequester? = null
+    focusMemory: FocusMemory? = null
 ) {
     val rowState = rememberLazyListState()
     val repeatGate = remember { DpadRepeatGate(horizontalRepeatIntervalMs = 150L) }
@@ -1518,7 +1529,7 @@ private fun RecommendationRow(
                 }) {
                     RecommendationCard(
                         item, accentColor,
-                        modifier = if (restoreFocusRequester != null && index == restoreIndex) Modifier.focusRequester(restoreFocusRequester) else Modifier,
+                        modifier = rowItemFocus(focusMemory, rowKey, index),
                         onClick = {
                             val stremioType = if (item.type == "tv") "series" else item.type
                             onItemClick(stremioType, "tmdb:${item.tmdbId}", rowKey, index)

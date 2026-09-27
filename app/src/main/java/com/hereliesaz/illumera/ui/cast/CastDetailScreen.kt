@@ -40,6 +40,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.hereliesaz.illumera.ui.navigation.focus.FocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
+import com.hereliesaz.illumera.ui.navigation.focus.focusMemoryRoot
+import com.hereliesaz.illumera.ui.navigation.focus.rememberFocusMemory
+import com.hereliesaz.illumera.ui.navigation.focus.restorableFocus
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.alpha
@@ -84,7 +89,11 @@ fun CastDetailScreen(
 
     // Back belongs to the app's back stack (NavDisplay pops this page).
 
-    Box(modifier = Modifier.fillMaxSize().background(bg)) {
+    // This page's place in its back-stack entry: the credit ("credit:<index>") that opened a
+    // title, so Back returns to it (or the nearest credit left in its place).
+    val focusMemory = rememberFocusMemory()
+
+    Box(modifier = Modifier.fillMaxSize().background(bg).focusMemoryRoot(focusMemory)) {
         when (val state = uiState) {
             is CastDetailState.Loading -> {
                 CircularProgressIndicator(
@@ -111,28 +120,14 @@ fun CastDetailScreen(
                 }
             }
             is CastDetailState.Success -> {
-                val restoreFocusRequester = remember { FocusRequester() }
                 val initialFocusRequester = remember { FocusRequester() }
-                var restoreIndex by rememberSaveable { mutableStateOf(-1) }
 
-                androidx.compose.runtime.LaunchedEffect(Unit) {
-                    if (restoreIndex >= 0) {
-                        kotlinx.coroutines.delay(300)
-                        runCatching { restoreFocusRequester.requestFocus() }
-                        restoreIndex = -1
-                    } else {
-                        runCatching { initialFocusRequester.requestFocus() }
-                    }
-                }
+                RestoreFocusOnResume(memory = focusMemory, fallback = initialFocusRequester)
 
                 CastDetailContent(
                     state.person, bg, accentColor, textColor,
-                    onNavigateToDetails = { type, id, index ->
-                        restoreIndex = index
-                        onNavigateToDetails(type, id)
-                    },
-                    restoreIndex = restoreIndex,
-                    restoreFocusRequester = restoreFocusRequester,
+                    onNavigateToDetails = { type, id, _ -> onNavigateToDetails(type, id) },
+                    focusMemory = focusMemory,
                     initialFocusRequester = initialFocusRequester
                 )
             }
@@ -147,8 +142,7 @@ private fun CastDetailContent(
     accentColor: Color,
     textColor: Color,
     onNavigateToDetails: (String, String, Int) -> Unit,
-    restoreIndex: Int = -1,
-    restoreFocusRequester: FocusRequester? = null,
+    focusMemory: FocusMemory,
     initialFocusRequester: FocusRequester? = null
 ) {
     // Background photo
@@ -198,7 +192,7 @@ private fun CastDetailContent(
         }
 
         if (allCredits.isNotEmpty()) {
-            FilmographySection(allCredits, accentColor, textColor, onNavigateToDetails, restoreIndex, restoreFocusRequester, initialFocusRequester)
+            FilmographySection(allCredits, accentColor, textColor, onNavigateToDetails, focusMemory, initialFocusRequester)
         }
     }
 }
@@ -288,8 +282,7 @@ private fun FilmographySection(
     accentColor: Color,
     textColor: Color,
     onNavigateToDetails: (String, String, Int) -> Unit,
-    restoreIndex: Int = -1,
-    restoreFocusRequester: FocusRequester? = null,
+    focusMemory: FocusMemory,
     initialFocusRequester: FocusRequester? = null
 ) {
     val density = LocalDensity.current
@@ -342,11 +335,11 @@ private fun FilmographySection(
                 }) {
                     FilmographyCard(
                         item, accentColor, textColor,
-                        modifier = when {
-                            restoreFocusRequester != null && index == restoreIndex -> Modifier.focusRequester(restoreFocusRequester)
-                            initialFocusRequester != null && index == 0 -> Modifier.focusRequester(initialFocusRequester)
-                            else -> Modifier
-                        }
+                        modifier = (if (initialFocusRequester != null && index == 0) {
+                            Modifier.focusRequester(initialFocusRequester)
+                        } else {
+                            Modifier
+                        }).restorableFocus("credit:$index", focusMemory)
                     ) {
                         val stremioType = if (item.type == "tv") "series" else item.type
                         onNavigateToDetails(stremioType, "tmdb:${item.tmdbId}", index)
