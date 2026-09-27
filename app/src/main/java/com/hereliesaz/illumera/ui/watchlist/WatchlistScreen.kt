@@ -1,5 +1,7 @@
 package com.hereliesaz.illumera.ui.watchlist
 
+import com.hereliesaz.illumera.ui.navigation.openNavDrawer
+import com.hereliesaz.illumera.ui.home.resolveRowRestoreIndex
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -87,7 +89,10 @@ fun WatchlistScreen(
         }
     }
 
-    androidx.activity.compose.BackHandler { drawerRequester.requestFocus() }
+    // Main-screen Back: every in-screen Back action (Queue reorder mode, item menus) has its
+    // own handler composed later, so it runs first; only once those are exhausted does
+    // Back fall through to here and open the side menu.
+    androidx.activity.compose.BackHandler { drawerRequester.openNavDrawer() }
 
     val upKeyDebouncer = remember { UpKeyDebouncer() }
     val dpadRepeatGate = remember { DpadRepeatGate() }
@@ -104,8 +109,11 @@ fun WatchlistScreen(
         val rowItems = if (rowIndex == 0) movies else series
         val stillExists = rowItems.any { it.id == itemId }
         if (!stillExists && rowItems.isNotEmpty()) {
-            val fallbackItem = rowItems.last()
-            val fallbackIndex = rowItems.lastIndex
+            // Removed (e.g. taken off the watchlist from its details page): focus its nearest
+            // remaining neighbour at the same position, not the end or start of the row.
+            val fallbackIndex = resolveRowRestoreIndex(key, rowIndex ?: 0, rowItems.map { it.id })
+                ?: rowItems.lastIndex
+            val fallbackItem = rowItems[fallbackIndex]
             lastFocusedKey = "${rowIndex}_${fallbackItem.id}_$fallbackIndex"
             viewModel.lastFocusedKey = lastFocusedKey
         } else if (!stillExists && rowItems.isEmpty()) {

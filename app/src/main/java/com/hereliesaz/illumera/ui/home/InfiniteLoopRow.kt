@@ -1,5 +1,6 @@
 package com.hereliesaz.illumera.ui.home
 
+import com.hereliesaz.illumera.ui.navigation.openNavDrawer
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -50,6 +51,31 @@ import com.hereliesaz.illumera.ui.components.LocalWatchedIds
 import com.hereliesaz.illumera.ui.components.LumeraLandscapeCard
 import com.hereliesaz.illumera.ui.utils.ImagePrefetcher
 import kotlinx.coroutines.delay
+
+private fun GridRowItem.restoreId(): String = when (this) {
+    is GridRowItem.MovieItem -> movie.id
+    is GridRowItem.ViewMoreItem -> "viewmore"
+}
+
+/**
+ * Resolves which position of a row focus should return to, from a saved focus key of the
+ * form "rowIndex_itemId_index". The item is matched by id (so it is found even if items
+ * before it were removed and it shifted); if it is gone, the nearest remaining neighbour at
+ * its old position is used. Returns null when there is no saved key for this row or the
+ * row is empty — never "jump to the first item" unless that is the neighbour.
+ */
+internal fun resolveRowRestoreIndex(savedKey: String?, rowIndex: Int, ids: List<String>): Int? {
+    if (savedKey == null || ids.isEmpty()) return null
+    val prefix = "${rowIndex}_"
+    if (!savedKey.startsWith(prefix)) return null
+    val rest = savedKey.removePrefix(prefix)
+    val savedIndex = rest.substringAfterLast('_', missingDelimiterValue = "").toIntOrNull()
+    val id = if (savedIndex != null) rest.substringBeforeLast('_') else rest
+    if (savedIndex != null && ids.getOrNull(savedIndex) == id) return savedIndex
+    val byId = ids.indexOf(id)
+    if (byId >= 0) return byId
+    return (savedIndex ?: 0).coerceIn(0, ids.lastIndex)
+}
 
 /**
  * ============================================================================
@@ -330,6 +356,12 @@ private fun LinearContent(
     val leftKeyDebouncer = remember { RowKeyRepeatDebouncer() }
     val navbarEscapeDebounceMs = 300L // Only allow escape if 300ms since last LEFT press
 
+    // Where focus returns to in this row: the saved item (found by id even if it shifted),
+    // or its nearest remaining neighbour if it was removed (e.g. marked watched).
+    val restoreIndex = remember(locallyFocusedItemId, items) {
+        resolveRowRestoreIndex(locallyFocusedItemId, rowIndex, items.map { it.id })
+    }
+
     // Pre-scroll warmup: compose off-screen items to populate recycler + compile GPU shaders
     // Scrolls forward 3 items and back in ~2 frames (invisible at 60fps)
     LaunchedEffect(Unit) {
@@ -358,7 +390,7 @@ private fun LinearContent(
             val uniqueKey = "${rowIndex}_${item.id}_$index"
 
             val shouldRequestFocus = when {
-                uniqueKey == locallyFocusedItemId -> true
+                index == restoreIndex -> true
                 !isGlobalFocusPresent && isFirstRow && isFirstItem -> true
                 else -> false
             }
@@ -387,7 +419,7 @@ private fun LinearContent(
                                     if (isFirstItem) {
                                         // Only escape to navbar if this is a deliberate press (not rapid long-press repeat)
                                         if (!isTopNav && timeSinceLastLeft > navbarEscapeDebounceMs) {
-                                            drawerRequester.requestFocus()
+                                            drawerRequester.openNavDrawer()
                                         }
                                         true // Consume at first item to prevent focus escaping
                                     } else {
@@ -539,15 +571,18 @@ private fun InfiniteGridContent(
 
     // Parse last focused key to find the item ID (not scroll index)
     // Key format: "rowIndex_movieId_scrollIndex" or "rowIndex_viewmore_scrollIndex"
-    val lastFocusedItemId = remember(locallyFocusedItemId) {
+    // If that item is no longer in the row (e.g. marked watched), fall back to its nearest
+    // remaining neighbour by position rather than focusing nothing.
+    val lastFocusedItemId = remember(locallyFocusedItemId, baseDataList) {
+        val ids = baseDataList.map { it.restoreId() }
         locallyFocusedItemId?.let { key ->
-            // It is already filtered to start with "${rowIndex}_" by parent
-             val withoutPrefix = key.removePrefix("${rowIndex}_")
-             if (withoutPrefix.startsWith("viewmore")) {
-                 "viewmore"
-             } else {
-                 withoutPrefix.substringBeforeLast("_")
-             }
+            // Scroll indices run across generations; reduce to a position within one section.
+            val withoutPrefix = key.removePrefix("${rowIndex}_")
+            val savedScroll = withoutPrefix.substringAfterLast("_").toIntOrNull()
+            val logicalKey = if (savedScroll != null && sectionSize > 0) {
+                "${rowIndex}_${withoutPrefix.substringBeforeLast("_")}_${savedScroll % sectionSize}"
+            } else key
+            resolveRowRestoreIndex(logicalKey, rowIndex, ids)?.let { ids[it] }
         }
     }
 
@@ -632,7 +667,7 @@ private fun InfiniteGridContent(
                                             if (isLoopStart) {
                                                 // Only escape to navbar if this is a deliberate press (not rapid long-press repeat)
                                                 if (!isTopNav && timeSinceLastLeft > navbarEscapeDebounceMs) {
-                                                    drawerRequester.requestFocus()
+                                                    drawerRequester.openNavDrawer()
                                                 }
                                                 true // Consume at loop start to prevent focus escaping
                                             } else {
@@ -776,6 +811,9 @@ private fun FiniteGridContent(
     val dataList: List<GridRowItem> = remember(truncatedMovies) {
         truncatedMovies.map { GridRowItem.MovieItem(it) } + GridRowItem.ViewMoreItem
     }
+    val restoreIndex = remember(locallyFocusedItemId, dataList) {
+        resolveRowRestoreIndex(locallyFocusedItemId, rowIndex, dataList.map { it.restoreId() })
+    }
 
     // Pre-scroll warmup: compose off-screen items to populate recycler + compile GPU shaders
     LaunchedEffect(Unit) {
@@ -818,7 +856,7 @@ private fun FiniteGridContent(
             }
 
             val shouldRequestFocus = when {
-                uniqueKey == locallyFocusedItemId -> true
+                index == restoreIndex -> true
                 !isGlobalFocusPresent && isFirstRow && isFirstItem -> true
                 else -> false
             }
@@ -842,7 +880,7 @@ private fun FiniteGridContent(
                                             if (isFirstItem) {
                                                 // Only escape to navbar if this is a deliberate press (not rapid long-press repeat)
                                                 if (!isTopNav && timeSinceLastLeft > navbarEscapeDebounceMs) {
-                                                    drawerRequester.requestFocus()
+                                                    drawerRequester.openNavDrawer()
                                                 }
                                                 true // Consume at first item to prevent focus escaping
                                             } else {

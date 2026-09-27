@@ -1,5 +1,6 @@
 package com.hereliesaz.illumera.ui.search
 
+import com.hereliesaz.illumera.ui.navigation.openNavDrawer
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -105,9 +106,23 @@ fun SearchScreen(
     // second back press doesn't exit the app. Resets on each fresh composition.
     var focusEverSet by remember { mutableStateOf(false) }
 
-    // BACK: Go to Drawer
+    // Whether focus is in the results pane (right of the keyboard) — TV layout only.
+    var isResultsFocused by remember { mutableStateOf(false) }
+
+    // BACK: Search is a main screen, so Back first unwinds the search itself —
+    // dismiss the system keyboard, leave the results for the keyboard, clear the
+    // query — and only opens the side menu once there is nothing left to back out of.
     BackHandler(enabled = !isTopNav || isContentFocused || !focusEverSet) {
-        drawerRequester.requestFocus()
+        when {
+            keepFocused -> {
+                keepFocused = false
+                try { keyboardController?.hide() } catch (_: Exception) { }
+                runCatching { entryRequester.requestFocus() }
+            }
+            isResultsFocused -> runCatching { entryRequester.requestFocus() }
+            state.query.isNotEmpty() -> viewModel.onQueryChange("")
+            else -> drawerRequester.openNavDrawer()
+        }
     }
 
     // Continuously maintain focus when system keyboard is active
@@ -193,6 +208,7 @@ fun SearchScreen(
                     .weight(1f)
                     .fillMaxHeight()
                     .padding(top = 20.dp + topPadding)
+                    .onFocusChanged { isResultsFocused = it.hasFocus }
             ) {
                 // CONTENT AREA (behind header)
                 if (state.isLoading) {
@@ -735,7 +751,7 @@ fun TvKeyboard(
                             when {
                                 // Left arrow on left edge -> go to drawer/topnav
                                 isLeftEdge && it.key == Key.DirectionLeft -> {
-                                    if (!isTopNav) drawerRequester.requestFocus()
+                                    if (!isTopNav) drawerRequester.openNavDrawer()
                                     true
                                 }
                                 // Right arrow on right edge -> focus first visible poster or block
@@ -773,7 +789,7 @@ fun TvKeyboard(
                     .then(if (isRemembered) Modifier.focusRequester(entryRequester) else Modifier)
                     .onPreviewKeyEvent {
                         if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
-                            if (!isTopNav) drawerRequester.requestFocus()
+                            if (!isTopNav) drawerRequester.openNavDrawer()
                             true
                         } else false
                     }

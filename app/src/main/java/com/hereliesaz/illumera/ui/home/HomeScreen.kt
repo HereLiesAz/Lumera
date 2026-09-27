@@ -1,5 +1,6 @@
 package com.hereliesaz.illumera.ui.home
 
+import com.hereliesaz.illumera.ui.navigation.openNavDrawer
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
@@ -160,7 +161,7 @@ fun HomeScreen(
     // If Top-Nav mode AND content is NOT focused AND focus was already set, disable this
     // handler so TopNavigationBar's handler can "Close Nav" (return to content).
     BackHandler(enabled = !isTopNav || isContentFocused || !focusEverSet) {
-        drawerRequester.requestFocus()
+        drawerRequester.openNavDrawer()
     }
 
     Box(
@@ -745,9 +746,11 @@ private fun resolveEffectiveFocusKey(
     val currentIndex = historyItems.indexOfFirst { it.id == itemId }
 
     if (currentIndex < 0) {
-        // Item was removed: redirect to first remaining item, or null (first regular row gets focus)
+        // Item was removed: redirect to its nearest remaining neighbour (same position, or
+        // the new last item), or null (first regular row gets focus) if the row is gone.
         return if (historyItems.isNotEmpty()) {
-            "-1_${historyItems.first().id}_0"
+            val neighbour = (savedIndex ?: 0).coerceIn(0, historyItems.lastIndex)
+            "-1_${historyItems[neighbour].id}_$neighbour"
         } else {
             null
         }

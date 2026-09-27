@@ -14,8 +14,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -67,6 +72,7 @@ enum class NavDestination(
     Exit(R.drawable.exit_icon, "Exit", iconSize = 21.dp)
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun NavDrawer(
     currentDestination: NavDestination,
@@ -84,6 +90,35 @@ fun NavDrawer(
     // rest (see the extraItemsAlpha override below for how Settings/Exit stay reachable).
     val isTv = rememberIsTvDevice()
     val isExpanded = isMenuFocused
+
+    // OPEN / CLOSE CONTRACT
+    // The menu is "open" exactly while it holds focus, and focus may only enter it
+    // (see [navDrawerFocusGuard]) by moving LEFT: D-pad Left off the natural left edge of
+    // the content, a screen's own Left-at-edge / Back-at-root handler calling
+    // [openNavDrawer], or the swipe-from-left-edge gesture below. Default/initial focus,
+    // Up/Down/Right traversal and any plain requestFocus() are refused.
+    //
+    // The content layer saves which of its children had focus whenever focus leaves it,
+    // so closing the menu hands focus straight back to that element — and only falls
+    // back to the screen's entry requester (onClose) when there is nothing to restore
+    // (e.g. the menu was opened by touch, or the element is gone). Closing never selects
+    // or navigates.
+    val contentFocusRequester = remember { FocusRequester() }
+    var contentHasFocus by remember { mutableStateOf(false) }
+    val closeMenu: () -> Unit = {
+        val restored = runCatching { contentFocusRequester.restoreFocusedChild() }.getOrDefault(false)
+        if (!restored) onClose()
+    }
+    val openMenu: () -> Unit = {
+        val opened = runCatching {
+            drawerRequesters[currentDestination]?.openNavDrawer() == true
+        }.getOrDefault(false)
+        if (!opened) {
+            // The current destination may not have a visible item (e.g. Queue, or a
+            // destination hidden by the profile's menu settings) — fall back to Home.
+            runCatching { drawerRequesters[NavDestination.Home]?.openNavDrawer() }
+        }
+    }
 
     val width by animateDpAsState(
         targetValue = if (isExpanded) 200.dp else 80.dp,
@@ -111,14 +146,25 @@ fun NavDrawer(
     Box(modifier = Modifier.fillMaxSize()) {
 
         // LAYER 1: Content
-        Box(modifier = Modifier.fillMaxSize()) {
+        // Save the focused content element as focus leaves the content (i.e. as the menu
+        // opens) so closeMenu can restore it. Deliberately not Modifier.focusRestorer(): that
+        // also redirects every programmatic requestFocus() on a child back to the saved
+        // element, which would hijack screens focusing their own entry points.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onFocusChanged { contentHasFocus = it.hasFocus }
+                .focusProperties { onExit = { contentFocusRequester.saveFocusedChild() } }
+                .focusRequester(contentFocusRequester)
+                .focusGroup()
+        ) {
             content()
         }
 
         // BackHandlers are dispatched last-composed first. Register this after screen content
         // so an open drawer wins over Watchlist (and any other screen-level BackHandler).
         BackHandler(enabled = isMenuFocused) {
-            onClose()
+            closeMenu()
         }
 
         // LAYER 2: Static Hero Mask
@@ -156,6 +202,10 @@ fun NavDrawer(
         }
 
         // LAYER 3: Dynamic Expansion Shadow
+        // While the menu is open this layer covers everything to the right of the rail, so
+        // any press or swipe there closes the menu (without selecting anything) instead of
+        // reaching the content underneath. It stops intercepting the moment the menu closes,
+        // so the 300ms fade-out never swallows a tap meant for content.
         androidx.compose.animation.AnimatedVisibility(
             visible = isMenuFocused,
             enter = androidx.compose.animation.fadeIn(animationSpec = tween(300)),
@@ -165,6 +215,16 @@ fun NavDrawer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .then(
+                        if (isMenuFocused) {
+                            Modifier.pointerInput(Unit) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false).consume()
+                                    closeMenu()
+                                }
+                            }
+                        } else Modifier
+                    )
                     .background(
                         Brush.horizontalGradient(
                             colorStops = arrayOf(
@@ -189,7 +249,12 @@ fun NavDrawer(
         com.hereliesaz.illumera.ui.components.NoiseOverlay(modifier = Modifier.zIndex(1.6f))
 
         // LAYER 4: Interactive Drawer
-        val closeSwipeThresholdPx = with(density) { 48.dp.toPx() }
+        val swipeThresholdPx = with(density) { 48.dp.toPx() }
+        val edgeWidthPx = with(density) { NavDrawerEdgeSwipeWidth.toPx() }
+        // Read inside the gesture callbacks, which outlive a single composition.
+        val menuOpenState = rememberUpdatedState(isMenuFocused)
+        val openMenuState = rememberUpdatedState(openMenu)
+        val closeMenuState = rememberUpdatedState(closeMenu)
         Box(
             modifier = Modifier
                 .width(width)
@@ -199,19 +264,33 @@ fun NavDrawer(
                     if (event.type == KeyEventType.KeyDown &&
                         (event.key == Key.DirectionRight || event.key == Key.Back)
                     ) {
-                        onClose()
+                        closeMenu()
                         true
                     } else {
                         false
                     }
                 }
-                .pointerInput(onClose, closeSwipeThresholdPx) {
+                // Touch: a rightward swipe that STARTS at the left screen edge opens the menu
+                // (the collapsed rail sits on that edge, so the gesture lands here); a
+                // rightward swipe on the open menu closes it. Taps still reach the items —
+                // drag detection only claims the pointer once it has moved past touch slop.
+                .pointerInput(swipeThresholdPx, edgeWidthPx) {
                     var horizontalDrag = 0f
+                    var startedAtEdge = false
                     detectHorizontalDragGestures(
-                        onDragStart = { horizontalDrag = 0f },
+                        onDragStart = { start ->
+                            horizontalDrag = 0f
+                            startedAtEdge = start.x <= edgeWidthPx
+                        },
                         onDragCancel = { horizontalDrag = 0f },
                         onDragEnd = {
-                            if (horizontalDrag >= closeSwipeThresholdPx) onClose()
+                            if (horizontalDrag >= swipeThresholdPx) {
+                                if (menuOpenState.value) {
+                                    closeMenuState.value()
+                                } else if (startedAtEdge) {
+                                    openMenuState.value()
+                                }
+                            }
                             horizontalDrag = 0f
                         },
                         onHorizontalDrag = { _, dragAmount ->
@@ -225,6 +304,7 @@ fun NavDrawer(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .navDrawerFocusGuard(contentHasFocus = { contentHasFocus })
                     .focusGroup(),
                 horizontalAlignment = Alignment.Start
             ) {
@@ -246,7 +326,7 @@ fun NavDrawer(
                             .onPreviewKeyEvent {
                                 if (it.type == KeyEventType.KeyDown) {
                                     if (it.key == Key.DirectionRight || it.key == Key.Back) {
-                                        onClose()
+                                        closeMenu()
                                         true
                                     } else {
                                         false
@@ -273,7 +353,7 @@ fun NavDrawer(
                                 .onPreviewKeyEvent {
                                     if (it.type == KeyEventType.KeyDown) {
                                         if (it.key == Key.DirectionRight || it.key == Key.Back) {
-                                            onClose()
+                                            closeMenu()
                                             true
                                         } else {
                                             false
@@ -331,6 +411,59 @@ fun NavDrawer(
             }
         }
     }
+}
+
+/** Width of the left-edge strip a rightward touch swipe must start in to open the menu. */
+internal val NavDrawerEdgeSwipeWidth = 24.dp
+
+/**
+ * The drawer's structural focus guard: focus may only ENTER the drawer by moving Left
+ * from focused content (D-pad Left off the content's left edge), or through an explicit
+ * [openNavDrawer]. Initial /
+ * default focus (FocusDirection.Enter), a plain requestFocus(), and Up/Down/Right/Tab
+ * traversal that happens to land on the rail are all refused. Once inside, directional
+ * moves can't leak back out into arbitrary content either — Right/Back/tap/swipe close
+ * the menu through NavDrawer's own close path, which restores the previous focus.
+ */
+internal fun Modifier.navDrawerFocusGuard(contentHasFocus: () -> Boolean): Modifier = focusProperties {
+    onEnter = {
+        val allowed = NavDrawerOpenGate.explicitOpen ||
+            // D-pad Left traversal counts only when it starts FROM content: with nothing
+            // focused (an item was removed, a dialog closed, a screen is still loading) a
+            // Left press is an initial-focus search, not "Left off the content's edge".
+            (requestedFocusDirection == FocusDirection.Left && contentHasFocus())
+        if (!allowed) cancelFocusChange()
+    }
+    onExit = {
+        when (requestedFocusDirection) {
+            FocusDirection.Up, FocusDirection.Down, FocusDirection.Left,
+            FocusDirection.Right, FocusDirection.Next, FocusDirection.Previous -> cancelFocusChange()
+            else -> Unit
+        }
+    }
+}
+
+/**
+ * Opens the side menu by focusing this drawer item. This is the ONLY sanctioned way for a
+ * screen to move focus into the menu, and screens may only call it:
+ *  - on D-pad Left when the focused element is genuinely at the content's left edge, or
+ *  - on Back on a main screen once every other Back action it has is exhausted.
+ * A plain requestFocus() on a drawer item is refused by [navDrawerFocusGuard].
+ * In top-navigation mode the same requesters belong to the top bar, which has no guard,
+ * so this also works there. Returns whether focus moved.
+ */
+fun FocusRequester.openNavDrawer(): Boolean {
+    NavDrawerOpenGate.explicitOpen = true
+    return try {
+        requestFocus(FocusDirection.Left)
+    } finally {
+        NavDrawerOpenGate.explicitOpen = false
+    }
+}
+
+/** Set only for the duration of an [openNavDrawer] call (focus transactions are synchronous). */
+internal object NavDrawerOpenGate {
+    var explicitOpen = false
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

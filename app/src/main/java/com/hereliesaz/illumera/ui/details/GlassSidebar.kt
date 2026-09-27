@@ -278,8 +278,45 @@ fun EpisodesContent(
 
     LaunchedEffect(selectedSeason) { onSeasonChange(selectedSeason) }
 
+    // PRIMARY TARGET: leaving the season tabs (SELECT on a tab, or DOWN from the tab row)
+    // must land on an episode itself — never on its queue / watched buttons, which are only
+    // reachable by moving RIGHT from the episode. The target is the episode last focused in
+    // that season (the sidebar's own entry focus records the episode it opened on), else the
+    // season's first unwatched episode.
+    val lastFocusedEpisodeBySeason = remember(videos) { mutableStateMapOf<Int, Int>() }
+    fun primaryEpisodeIndex(season: Int): Int {
+        val eps = seasons[season].orEmpty()
+        if (eps.isEmpty()) return 0
+        lastFocusedEpisodeBySeason[season]?.let { return it.coerceIn(0, eps.lastIndex) }
+        val firstUnwatched = eps.indexOfFirst { ep ->
+            episodeProgressMap["S${ep.season}:E${ep.episode}"]?.watched != true
+        }
+        return if (firstUnwatched >= 0) firstUnwatched else 0
+    }
+    val primaryEpisodeRequester = remember { FocusRequester() }
+    val primaryIndex = primaryEpisodeIndex(selectedSeason)
+    fun focusPrimaryEpisode(season: Int) {
+        scope.launch {
+            withFrameNanos { } // let a newly selected season's episodes compose first
+            val target = primaryEpisodeIndex(season)
+            val visible = listState.layoutInfo.visibleItemsInfo.any { it.index == target }
+            if (!visible) {
+                runCatching { listState.scrollToItem(target) }
+                withFrameNanos { } // ...and the target episode (with its requester)
+            }
+            runCatching { primaryEpisodeRequester.requestFocus() }
+        }
+    }
+
+    // Set while a season tab drives the change: focusPrimaryEpisode owns the scroll then.
+    var seasonChangedByTab by remember { mutableStateOf(false) }
+
     // Scroll to the saved episode when the sidebar opens (or back to top when savedIndex is 0)
     LaunchedEffect(savedIndex, selectedSeason) {
+        if (seasonChangedByTab) {
+            seasonChangedByTab = false
+            return@LaunchedEffect
+        }
         if (episodes.isNotEmpty() && savedIndex in episodes.indices) {
             runCatching { listState.scrollToItem(savedIndex) }
         }
@@ -300,11 +337,20 @@ fun EpisodesContent(
                                 it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown
                             } else Modifier.onPreviewKeyEvent { repeatGate.shouldConsume(it) })
                             .then(if (num == selectedSeason) Modifier.focusRequester(tabRequester) else Modifier)
+                            .onPreviewKeyEvent {
+                                // DOWN from the tab row goes to the season's primary episode,
+                                // not whatever control happens to sit nearest below the tab.
+                                if (it.key == Key.DirectionDown && it.type == KeyEventType.KeyDown) {
+                                    if (episodes.isNotEmpty()) focusPrimaryEpisode(selectedSeason)
+                                    true
+                                } else false
+                            }
                             .focusProperties { up = FocusRequester.Cancel },
                         onClick = {
+                            if (num != selectedSeason) seasonChangedByTab = true
                             selectedSeason = num
-                            // Only reset scroll to top when manually changing seasons
-                            scope.launch { listState.scrollToItem(0) }
+                            // SELECT on a season tab moves into that season's episodes.
+                            focusPrimaryEpisode(num)
                         }
                     )
                 }
@@ -337,6 +383,8 @@ fun EpisodesContent(
                     val isTarget = index == (if (savedIndex in episodes.indices) savedIndex else 0)
                     val mod = Modifier
                         .then(if (isTarget) Modifier.focusRequester(focusRequester) else Modifier)
+                        .then(if (index == primaryIndex) Modifier.focusRequester(primaryEpisodeRequester) else Modifier)
+                        .onFocusChanged { if (it.isFocused) lastFocusedEpisodeBySeason[selectedSeason] = index }
                         .then(if (index == 0) Modifier.focusProperties { up = if (seasons.isNotEmpty()) tabRequester else FocusRequester.Cancel } else Modifier)
 
                     val isCurrentEpisode = currentEpisodeId != null && (
@@ -881,6 +929,16 @@ fun EpisodeItem(
                         .size(28.dp)
                         .focusRequester(queueRequester)
                         .focusProperties { left = thumbnailRequester; right = buttonRequester }
+                        .onPreviewKeyEvent { event ->
+                            // Secondary control: Up/Down leave via the episode itself, so they
+                            // step episode-to-episode instead of button-to-button.
+                            if (event.type == KeyEventType.KeyDown &&
+                                (event.key == Key.DirectionUp || event.key == Key.DirectionDown)
+                            ) {
+                                thumbnailRequester.requestFocus()
+                            }
+                            false
+                        }
                         .clip(CircleShape)
                         .background(queueColors.container)
                         .border(queueColors.borderWidth, queueColors.border, CircleShape)
@@ -894,7 +952,8 @@ fun EpisodeItem(
                     isWatched = isWatched,
                     isFocused = buttonFocused,
                     focusRequester = buttonRequester,
-                    thumbnailRequester = queueRequester,
+                    thumbnailRequester = thumbnailRequester,
+                    leftRequester = queueRequester,
                     onFocusChanged = { buttonFocused = it },
                     onClick = onToggleWatched
                 )
@@ -909,6 +968,7 @@ private fun WatchedToggleButton(
     isFocused: Boolean,
     focusRequester: FocusRequester,
     thumbnailRequester: FocusRequester,
+    leftRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -933,10 +993,10 @@ private fun WatchedToggleButton(
             .background(colors.container)
             .border(colors.borderWidth, colors.border, RoundedCornerShape(12.dp))
             .focusRequester(focusRequester)
-            .focusProperties { left = thumbnailRequester; right = FocusRequester.Cancel }
+            .focusProperties { left = leftRequester; right = FocusRequester.Cancel }
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && (event.key == Key.DirectionUp || event.key == Key.DirectionDown)) {
-                    // Move to thumbnail first, then let the system handle up/down to adjacent episodes
+                    // Move to the episode first, then let the system handle up/down to adjacent episodes
                     thumbnailRequester.requestFocus()
                     false // Don't consume — let the key propagate from the thumbnail
                 } else false

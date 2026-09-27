@@ -1111,6 +1111,12 @@ class MainActivity : ComponentActivity() {
                     } else {
                         // MAIN APP CONTENT
                         var currentNav by remember { mutableStateOf(NavDestination.Home) }
+                        // Bumped when Settings is re-selected from the menu while already on
+                        // Settings: re-keys SettingsScreen so any open sub-page/section resets
+                        // to the Settings root.
+                        var settingsResetKey by remember { mutableIntStateOf(0) }
+                        // Whether focus is inside Settings' content pane (vs. its section list).
+                        var settingsContentFocused by remember { mutableStateOf(false) }
                         
                         // Grid view state
                         var gridViewTitle by rememberSaveable { mutableStateOf("") }
@@ -1137,7 +1143,7 @@ class MainActivity : ComponentActivity() {
                         val queueEntryRequester = remember { FocusRequester() }
 
                         // STATE CHANGE TRIGGER:
-                        LaunchedEffect(currentNav, activeView) {
+                        LaunchedEffect(currentNav, activeView, settingsResetKey) {
                             if (activeView != "menu") return@LaunchedEffect
                             when(currentNav) {
                                 // HomeScreen requests focus itself once data is ready.
@@ -1182,7 +1188,9 @@ class MainActivity : ComponentActivity() {
                                 // Re-check after the delay: the user may have navigated away from
                                 // Settings while this was pending, unmounting the FocusRequester's
                                 // only attachment point and making requestFocus() throw.
-                                if (activeView == "menu" && currentNav == NavDestination.Settings) {
+                                // Skip if Settings already put focus back on the option that was
+                                // changed (see PersonalizationSettings' Menu Position).
+                                if (activeView == "menu" && currentNav == NavDestination.Settings && !settingsContentFocused) {
                                     try {
                                         settingsEntryRequester.requestFocus()
                                     } catch (_: IllegalStateException) {
@@ -1197,7 +1205,6 @@ class MainActivity : ComponentActivity() {
                             if (view == "menu") {
                                 // Double-back-to-exit: two rapid back presses exit the app
                                 var lastBackPressMs by remember { mutableStateOf(0L) }
-                                var settingsContentFocused by remember { mutableStateOf(false) }
 
                                 // Shared content composable
                                 // Shared navigation handler
@@ -1205,14 +1212,24 @@ class MainActivity : ComponentActivity() {
                                     if (destination == NavDestination.Exit) {
                                         finishAffinity()
                                     } else if (currentNav == destination) {
-                                        // Already here - just focus content
-                                        when(destination) {
-                                            NavDestination.Home, NavDestination.Movies, NavDestination.Series -> homeEntryRequester.requestFocus()
-                                            NavDestination.Search -> searchEntryRequester.requestFocus()
-                                            NavDestination.Settings -> settingsEntryRequester.requestFocus()
-                                            NavDestination.Watchlist -> watchlistEntryRequester.requestFocus()
-                                            NavDestination.Queue -> queueEntryRequester.requestFocus()
-                                            else -> {}
+                                        // Re-selecting the current destination is still a navigation:
+                                        // return it to its root and put focus into its content (which
+                                        // also closes the menu). Settings is the only main destination
+                                        // with in-place sub-pages, so it is re-created from scratch; the
+                                        // others have no sub-pages inside the menu view and just take
+                                        // focus at their entry point.
+                                        runCatching {
+                                            when (destination) {
+                                                NavDestination.Home, NavDestination.Movies, NavDestination.Series -> homeEntryRequester.requestFocus()
+                                                NavDestination.Search -> searchEntryRequester.requestFocus()
+                                                NavDestination.Settings -> {
+                                                    settingsContentFocused = false
+                                                    settingsResetKey++ // LaunchedEffect above re-focuses Settings' entry
+                                                }
+                                                NavDestination.Watchlist -> watchlistEntryRequester.requestFocus()
+                                                NavDestination.Queue -> queueEntryRequester.requestFocus()
+                                                else -> {}
+                                            }
                                         }
                                     } else {
                                         if (currentNav == NavDestination.Search) searchFocusTarget = null
@@ -1416,17 +1433,20 @@ class MainActivity : ComponentActivity() {
                                                 }
                                                 NavDestination.Settings -> {
                                                     val homeVm = hiltViewModel<HomeViewModel>()
-                                                    SettingsScreen(
-                                                        currentProfile = currentProfile,
-                                                        onBack = {
-                                                            currentNav = NavDestination.Home
-                                                            drawerRequesters[NavDestination.Home]?.requestFocus()
-                                                        },
-                                                        entryRequester = settingsEntryRequester,
-                                                        drawerRequester = drawerRequesters[NavDestination.Settings]!!,
-                                                        onDashboardChanged = { homeVm.invalidate() },
-                                                        onContentFocusChanged = { settingsContentFocused = it }
-                                                    )
+                                                    key(settingsResetKey) {
+                                                        SettingsScreen(
+                                                            currentProfile = currentProfile,
+                                                            onBack = {
+                                                                // Leaving Settings is a navigation, not a menu
+                                                                // open: Home focuses its own content once loaded.
+                                                                currentNav = NavDestination.Home
+                                                            },
+                                                            entryRequester = settingsEntryRequester,
+                                                            drawerRequester = drawerRequesters[NavDestination.Settings]!!,
+                                                            onDashboardChanged = { homeVm.invalidate() },
+                                                            onContentFocusChanged = { settingsContentFocused = it }
+                                                        )
+                                                    }
                                                 }
                                                 NavDestination.Exit -> { /* App closes */ }
                                             }
@@ -1582,17 +1602,20 @@ class MainActivity : ComponentActivity() {
                                                 }
                                                 NavDestination.Settings -> {
                                                     val homeVm = hiltViewModel<HomeViewModel>()
-                                                    SettingsScreen(
-                                                        currentProfile = currentProfile,
-                                                        onBack = {
-                                                            currentNav = NavDestination.Home
-                                                            drawerRequesters[NavDestination.Home]?.requestFocus()
-                                                        },
-                                                        entryRequester = settingsEntryRequester,
-                                                        drawerRequester = drawerRequesters[NavDestination.Settings]!!,
-                                                        onDashboardChanged = { homeVm.invalidate() },
-                                                        onContentFocusChanged = { settingsContentFocused = it }
-                                                    )
+                                                    key(settingsResetKey) {
+                                                        SettingsScreen(
+                                                            currentProfile = currentProfile,
+                                                            onBack = {
+                                                                // Leaving Settings is a navigation, not a menu
+                                                                // open: Home focuses its own content once loaded.
+                                                                currentNav = NavDestination.Home
+                                                            },
+                                                            entryRequester = settingsEntryRequester,
+                                                            drawerRequester = drawerRequesters[NavDestination.Settings]!!,
+                                                            onDashboardChanged = { homeVm.invalidate() },
+                                                            onContentFocusChanged = { settingsContentFocused = it }
+                                                        )
+                                                    }
                                                 }
                                                 NavDestination.Exit -> { /* App closes */ }
                                             }

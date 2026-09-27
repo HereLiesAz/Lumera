@@ -1,5 +1,6 @@
 package com.hereliesaz.illumera.ui.home
 
+import com.hereliesaz.illumera.ui.navigation.openNavDrawer
 import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
@@ -207,7 +208,7 @@ fun HubRow(
                                             if (isFirstItem) {
                                                 // Only escape to navbar if this is a deliberate press
                                                 if (!isTopNav && timeSinceLastLeft > navbarEscapeDebounceMs) {
-                                                    drawerRequester.requestFocus()
+                                                    drawerRequester.openNavDrawer()
                                                 }
                                                 true // Consume at first item to prevent focus escaping
                                             } else {

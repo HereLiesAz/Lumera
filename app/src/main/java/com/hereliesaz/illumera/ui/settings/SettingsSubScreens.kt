@@ -144,6 +144,17 @@ fun PersonalizationSettings(
     val hubRoundCorners = currentProfile.hubRoundCorners
     val navPos = currentProfile.navPosition
 
+    // Changing Menu Position rebuilds the screen (side menu <-> top bar); land back on it.
+    val menuPositionRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (viewModel.focusMenuPositionOnReturn) {
+            viewModel.focusMenuPositionOnReturn = false
+            // Ahead of MainActivity's 450ms post-switch fallback to the section list.
+            kotlinx.coroutines.delay(420)
+            runCatching { menuPositionRequester.requestFocus() }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -213,9 +224,13 @@ fun PersonalizationSettings(
             VoidSegmentedControl(
                 options = listOf("Left" to "left", "Top" to "top"),
                 selectedOption = navPos,
-                onOptionSelected = { viewModel.updateNavPosition(currentProfile.id, it) },
+                onOptionSelected = {
+                    if (it != navPos) viewModel.focusMenuPositionOnReturn = true
+                    viewModel.updateNavPosition(currentProfile.id, it)
+                },
                 onBack = onGoBack,
-                blockUp = false
+                blockUp = false,
+                selectedFocusRequester = menuPositionRequester
             )
         }
         Spacer(Modifier.height(15.dp))
@@ -972,7 +987,9 @@ fun <T> VoidSegmentedControl(
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
     blockUp: Boolean = false,
-    onFocus: () -> Unit = {}
+    onFocus: () -> Unit = {},
+    /** Attached to the currently selected option, for restoring focus onto it. */
+    selectedFocusRequester: FocusRequester? = null
 ) {
     Row(
         modifier = Modifier
@@ -1009,7 +1026,11 @@ fun <T> VoidSegmentedControl(
                 isSelected = isSelected,
                 onClick = { onOptionSelected(value) },
                 onFocus = onFocus,
-                keyModifier = backModifier.then(upBlockModifier)
+                keyModifier = backModifier.then(upBlockModifier).then(
+                    if (isSelected && selectedFocusRequester != null) {
+                        Modifier.focusRequester(selectedFocusRequester)
+                    } else Modifier
+                )
             )
         }
     }

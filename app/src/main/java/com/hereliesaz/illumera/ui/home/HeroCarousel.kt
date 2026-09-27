@@ -1,5 +1,6 @@
 package com.hereliesaz.illumera.ui.home
 
+import com.hereliesaz.illumera.ui.navigation.openNavDrawer
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -189,7 +190,7 @@ fun HeroCarousel(
                             } else {
                                 // Loop significantly improves UX
                                 if (!isTopNav && drawerRequester != null && timeSinceLastLeft > 300L) {
-                                    drawerRequester.requestFocus()
+                                    drawerRequester.openNavDrawer()
                                     true
                                 } else {
                                     // Infinite scroll: loop to last item

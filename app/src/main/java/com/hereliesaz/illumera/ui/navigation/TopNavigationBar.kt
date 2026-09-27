@@ -254,10 +254,10 @@ fun TopNavigationBar(
                          destination = destination,
                          isSelected = isSelected,
                          isTopNavActive = isTopNavActive,
-                         onNavigate = {
-                             if (currentDestination == destination) onEnterContent()
-                             else onNavigate(destination)
-                         },
+                         // Always route the selection: the host decides what re-selecting the
+                         // current destination means (e.g. return a sub-page to its root, or leave
+                         // the grid view), so it must never be swallowed here.
+                         onNavigate = { onNavigate(destination) },
                          modifier = Modifier
                              .focusRequester(topNavRequesters[destination]!!)
                              .onPreviewKeyEvent { event ->
@@ -306,10 +306,7 @@ fun TopNavigationBar(
                     destination = settingsItem,
                     isSelected = currentDestination == settingsItem,
                     isTopNavActive = true,
-                    onNavigate = { 
-                        if (currentDestination == settingsItem) onEnterContent() 
-                        else onNavigate(settingsItem)
-                    },
+                    onNavigate = { onNavigate(settingsItem) },
                     modifier = Modifier
                         .focusRequester(topNavRequesters[settingsItem]!!)
                         .onFocusChanged { isSettingsFocused = it.isFocused }

@@ -1,5 +1,6 @@
 package com.hereliesaz.illumera.ui.settings
 
+import com.hereliesaz.illumera.ui.navigation.openNavDrawer
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.*
@@ -76,7 +77,9 @@ fun SettingsScreen(
     // full-width section list with the content sliding over it, like the
     // details screen's sources panel (GlassSidebarScaffold).
     val isCompact = LocalConfiguration.current.screenWidthDp < 600
-    var contentPanelOpen by remember { mutableStateOf(false) }
+    // Open straight onto the content when rebuilt by a Menu Position change, so the
+    // Personalization pane (and that option) exists to take focus back.
+    var contentPanelOpen by remember { mutableStateOf(viewModel.focusMenuPositionOnReturn) }
 
     val sidebarListRequester = remember { FocusRequester() }
     val contentPaneRequester = remember { FocusRequester() }
@@ -100,14 +103,20 @@ fun SettingsScreen(
     // 1. Side Nav (Always)
     // 2. Top Nav AND Screen is Focused (Handle = Open Nav/Go Back)
     // Disabled when Top Nav AND Screen NOT Focused (Nav is focused) -> Let Nav handle Close.
+    // Settings is a main screen: Back first unwinds everything inside it (sub-screens'
+    // own BackHandlers are composed later and win; then close the phone content panel,
+    // then leave the content pane for the section list) and only opens the side menu
+    // from the section list itself.
     BackHandler(enabled = !isTopNav || isScreenFocused) {
-        if (isCompact && contentPanelOpen) {
-            contentPanelOpen = false
-            itemRequesters[selectedSection]?.requestFocus()
-        } else if (isContentFocused) {
-            itemRequesters[selectedSection]?.requestFocus()
-        } else {
-            drawerRequester.requestFocus()
+        when {
+            isCompact && contentPanelOpen -> {
+                contentPanelOpen = false
+                itemRequesters[selectedSection]?.requestFocus()
+            }
+            isContentFocused -> itemRequesters[selectedSection]?.requestFocus()
+            // Mid-transition into a section: its content is about to take focus.
+            isTransitioning -> Unit
+            else -> drawerRequester.openNavDrawer()
         }
     }
     
@@ -177,16 +186,12 @@ fun SettingsScreen(
                                 when (it.key) {
                                     Key.DirectionLeft -> {
                                         if (!isTransitioning) {
-                                            drawerRequester.requestFocus()
+                                            drawerRequester.openNavDrawer()
                                         }
                                         true
                                     }
-                                    Key.Back -> {
-                                        if (!isTransitioning) {
-                                            drawerRequester.requestFocus()
-                                            true
-                                        } else false
-                                    }
+                                    // Back is left to the screen's BackHandler, which
+                                    // unwinds panels before opening the side menu.
                                     Key.DirectionUp -> {
                                         // Up on first section -> go to drawer/topnav (ONLY in top nav mode)
                                         if (isFirstSection && !isTransitioning && isTopNav) {
