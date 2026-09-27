@@ -271,9 +271,15 @@ fun QueueSection(
             val refreshInteraction = remember { MutableInteractionSource() }
             val refreshFocused by refreshInteraction.collectIsFocusedAsState()
             val refreshColors = buttonColors(focused = refreshFocused, enabled = refreshEnabled)
+            // Stays focusable while refreshing (dimmed, presses ignored): disabling the button
+            // the viewer just pressed took focus away from under them.
             Button(
-                onClick = { scope.launch { queueManager.refreshSuggestions(resetDismissed = true) } },
-                enabled = refreshEnabled,
+                onClick = {
+                    if (!state.isRefreshingSuggestions) {
+                        scope.launch { queueManager.refreshSuggestions(resetDismissed = true) }
+                    }
+                },
+                enabled = state.preferences.enabled,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = refreshColors.container,
                     contentColor = refreshColors.content,
