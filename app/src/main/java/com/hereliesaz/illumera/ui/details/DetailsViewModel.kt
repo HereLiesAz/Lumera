@@ -117,7 +117,14 @@ class DetailsViewModel @Inject constructor(
         val tmdbTrailer: TmdbVideoInfo? = null,
         val tmdbCollection: List<TmdbMetaPreview> = emptyList(),
         val tmdbCollectionName: String? = null
-    )
+    ) {
+        /**
+         * The id this page builds stream and episode playback ids from: the resolved IMDb id
+         * behind a tmdb: id, else the loaded title's id, else [pageId] (the page's own key id).
+         * Playback started here uses it as the show id, so next-episode and progress ids match.
+         */
+        fun streamId(pageId: String): String = resolvedId ?: meta?.id ?: pageId
+    }
 
     private val _state = MutableStateFlow(DetailsState())
     val state: StateFlow<DetailsState> = _state

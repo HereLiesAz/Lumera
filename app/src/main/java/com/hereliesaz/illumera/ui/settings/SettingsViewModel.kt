@@ -23,13 +23,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Set when the Menu Position option is changed. Switching the menu between side and top
-     * rebuilds the whole screen, so the rebuilt Settings uses this to put focus back on that
-     * same option instead of the section list.
-     */
-    var focusMenuPositionOnReturn = false
-
     fun updateNavPosition(profileId: Int, position: String) {
         updateProfile(profileId) { it.copy(navPosition = position) }
     }

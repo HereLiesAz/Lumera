@@ -67,6 +67,38 @@ fun TopNavigationBar(
     onExit: () -> Unit = {},
     content: @Composable () -> Unit
 ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // LAYER 1: Content (Full Screen)
+        Box(modifier = Modifier.fillMaxSize()) {
+            content()
+        }
+        TopNavigationBarOverlay(
+            currentDestination = currentDestination,
+            currentProfile = currentProfile,
+            topNavRequesters = topNavRequesters,
+            onNavigate = onNavigate,
+            onEnterContent = onEnterContent,
+            onLogout = onLogout,
+            onExit = onExit
+        )
+    }
+}
+
+/**
+ * The top bar and its shading (layers 2-5), drawn over full-screen content. MainShell
+ * composes it apart from the content so switching menu layout leaves the content in place.
+ */
+@Composable
+fun TopNavigationBarOverlay(
+    currentDestination: NavDestination,
+    currentProfile: ProfileEntity?,
+    topNavRequesters: Map<NavDestination, FocusRequester>,
+    onNavigate: (NavDestination) -> Unit,
+    onEnterContent: () -> Unit,
+    onLogout: () -> Unit = {},
+    onExit: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     // 1. Define groups
     // Queue now lives inside Watchlist, so only Watchlist is exposed as a top-level tab.
     val centerItems = buildList {
@@ -121,12 +153,9 @@ fun TopNavigationBar(
     val staticMaskGradientEndPx = with(gradientDensity) { 180.dp.toPx() }
     val focusedGradientEndPx = with(gradientDensity) { 400.dp.toPx() }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
 
-        // LAYER 1: Content (Full Screen)
-        Box(modifier = Modifier.fillMaxSize()) {
-            content()
-        }
+        // LAYER 1 (the content) is the caller's, under this overlay.
 
         // LAYER 2: Static Top Gradient (Hero Mask)
         if (showStaticMask) {

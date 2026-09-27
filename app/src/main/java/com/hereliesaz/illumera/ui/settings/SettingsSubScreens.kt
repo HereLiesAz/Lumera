@@ -144,17 +144,8 @@ fun PersonalizationSettings(
     val hubRoundCorners = currentProfile.hubRoundCorners
     val navPos = currentProfile.navPosition
 
-    // Changing Menu Position rebuilds the screen (side menu <-> top bar); land back on it.
-    val menuPositionRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        if (viewModel.focusMenuPositionOnReturn) {
-            viewModel.focusMenuPositionOnReturn = false
-            // Ahead of MainActivity's 450ms post-switch fallback to the section list.
-            kotlinx.coroutines.delay(420)
-            runCatching { menuPositionRequester.requestFocus() }
-        }
-    }
-
+    // Changing Menu Position swaps only the menu chrome (MainShell): this screen, and the
+    // option's focus, stay where they are.
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -224,13 +215,9 @@ fun PersonalizationSettings(
             VoidSegmentedControl(
                 options = listOf("Left" to "left", "Top" to "top"),
                 selectedOption = navPos,
-                onOptionSelected = {
-                    if (it != navPos) viewModel.focusMenuPositionOnReturn = true
-                    viewModel.updateNavPosition(currentProfile.id, it)
-                },
+                onOptionSelected = { viewModel.updateNavPosition(currentProfile.id, it) },
                 onBack = onGoBack,
-                blockUp = false,
-                selectedFocusRequester = menuPositionRequester
+                blockUp = false
             )
         }
         Spacer(Modifier.height(15.dp))

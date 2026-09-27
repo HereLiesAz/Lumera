@@ -11,16 +11,67 @@ import kotlinx.serialization.modules.polymorphic
  * only strings and ints so a restore after R8 never depends on Parcelable class names.
  */
 
-/** The whole menu area: side menu / top bar and the main screen chosen in it. Always the bottom entry. */
+/**
+ * A main screen chosen in the menu (side rail or top bar). Exactly one is on the stack, always
+ * at the bottom. [nonce] tells a re-selected screen from the one it replaces, so choosing it
+ * again in the menu gives a fresh entry (new saveable state and entry ViewModels).
+ */
+sealed interface MainRootKey : NavKey {
+    val nonce: Int
+    val destination: NavDestination
+}
+
 @Serializable
-data object MainKey : NavKey
+data class HomeKey(override val nonce: Int = 0) : MainRootKey {
+    override val destination: NavDestination get() = NavDestination.Home
+}
+
+@Serializable
+data class MoviesKey(override val nonce: Int = 0) : MainRootKey {
+    override val destination: NavDestination get() = NavDestination.Movies
+}
+
+@Serializable
+data class SeriesKey(override val nonce: Int = 0) : MainRootKey {
+    override val destination: NavDestination get() = NavDestination.Series
+}
+
+@Serializable
+data class SearchKey(override val nonce: Int = 0) : MainRootKey {
+    override val destination: NavDestination get() = NavDestination.Search
+}
+
+@Serializable
+data class WatchlistKey(override val nonce: Int = 0) : MainRootKey {
+    override val destination: NavDestination get() = NavDestination.Watchlist
+}
+
+@Serializable
+data class SettingsKey(override val nonce: Int = 0) : MainRootKey {
+    override val destination: NavDestination get() = NavDestination.Settings
+}
+
+/** The root key for a menu destination; null for the menu's actions (Log Out, Exit). */
+fun mainRootKeyFor(destination: NavDestination, nonce: Int = 0): MainRootKey? = when (destination) {
+    NavDestination.Home -> HomeKey(nonce)
+    NavDestination.Movies -> MoviesKey(nonce)
+    NavDestination.Series -> SeriesKey(nonce)
+    NavDestination.Search -> SearchKey(nonce)
+    NavDestination.Watchlist -> WatchlistKey(nonce)
+    NavDestination.Settings -> SettingsKey(nonce)
+    NavDestination.Profile, NavDestination.Exit -> null
+}
 
 /**
  * "View more" grid. Its items live in MainActivity's in-memory holder, not in the key, so
  * after process death the grid has nothing to show and returns to the screen below it.
+ * Like the main screens, it shows the menu.
  */
 @Serializable
 data class GridKey(val title: String, val configId: String) : NavKey
+
+/** Whether [key] is shown with the menu chrome (a main screen or the grid over one). */
+fun isMainAreaKey(key: NavKey?): Boolean = key is MainRootKey || key is GridKey
 
 /**
  * A title's Details page. [title], [poster] and [logo] are what the opener already knew, shown
@@ -69,7 +120,12 @@ data object PlayerKey : NavKey
 val AppBackStackConfiguration: SavedStateConfiguration = SavedStateConfiguration {
     serializersModule = SerializersModule {
         polymorphic(NavKey::class) {
-            subclass(MainKey::class, MainKey.serializer())
+            subclass(HomeKey::class, HomeKey.serializer())
+            subclass(MoviesKey::class, MoviesKey.serializer())
+            subclass(SeriesKey::class, SeriesKey.serializer())
+            subclass(SearchKey::class, SearchKey.serializer())
+            subclass(WatchlistKey::class, WatchlistKey.serializer())
+            subclass(SettingsKey::class, SettingsKey.serializer())
             subclass(GridKey::class, GridKey.serializer())
             subclass(DetailsKey::class, DetailsKey.serializer())
             subclass(CastKey::class, CastKey.serializer())
@@ -83,13 +139,31 @@ val AppBackStackConfiguration: SavedStateConfiguration = SavedStateConfiguration
  * Every change MainActivity makes to the back stack. Plain list operations, so the
  * navigation contract is testable without a composition.
  *
- * - The stack is never empty and [MainKey] is always at the bottom.
- * - Back pops one entry; at [MainKey] alone it pops nothing and the menu area handles Back.
+ * - The stack is never empty, and its bottom is always exactly one [MainRootKey].
+ * - Choosing a main screen in the menu clears the stack down to that screen's fresh root.
+ * - Back pops one entry; at the root alone it pops nothing and the main screen handles Back.
  * - Leaving the player pops only the player, so Back lands on whatever opened it.
  * - A queue advance replaces the player with the next item's Details on top of the stack.
  * - Details, Cast and Studio pages are flat entries: each opened page is pushed, Back pops it.
  */
 object BackStackOps {
+
+    /**
+     * The menu chose [destination]: the stack becomes that screen's root alone, as a new
+     * entry even when it is the screen already showing. Returns false for the menu's
+     * actions (Log Out, Exit), which leave the stack alone.
+     */
+    fun navigateToMainRoot(stack: MutableList<NavKey>, destination: NavDestination): Boolean {
+        val previousNonce = (stack.firstOrNull() as? MainRootKey)?.nonce ?: -1
+        val root = mainRootKeyFor(destination, previousNonce + 1) ?: return false
+        // Add first so the stack is never empty in between.
+        stack.add(root)
+        while (stack.size > 1) stack.removeAt(0)
+        return true
+    }
+
+    /** The main screen at the bottom of the stack. */
+    fun currentRoot(stack: List<NavKey>): MainRootKey = stack.firstOrNull() as? MainRootKey ?: HomeKey()
 
     fun openDetails(
         stack: MutableList<NavKey>,
@@ -153,7 +227,7 @@ object BackStackOps {
         openDetails(stack, type = type, id = id, title = title, poster = poster, queueAutoPlayId = queueAutoPlayId)
     }
 
-    /** Back: pops one entry unless only [MainKey] is left. */
+    /** Back: pops one entry unless only the main root is left. */
     fun pop(stack: MutableList<NavKey>): Boolean {
         if (stack.size <= 1) {
             ensureRoot(stack)
@@ -169,17 +243,12 @@ object BackStackOps {
         return pop(stack)
     }
 
-    /** Back to the menu area alone (menu choice from the grid, logout). */
+    /** Logout: a fresh Home alone, so the next profile starts from the top. */
     fun resetToMain(stack: MutableList<NavKey>) {
-        if (stack.firstOrNull() != MainKey) {
-            stack.clear()
-            stack.add(MainKey)
-            return
-        }
-        while (stack.size > 1) stack.removeAt(stack.lastIndex)
+        navigateToMainRoot(stack, NavDestination.Home)
     }
 
     private fun ensureRoot(stack: MutableList<NavKey>) {
-        if (stack.isEmpty()) stack.add(MainKey)
+        if (stack.firstOrNull() !is MainRootKey) stack.add(0, HomeKey())
     }
 }

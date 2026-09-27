@@ -148,7 +148,7 @@ fun DetailsScreen(
 
     val state by viewModel.state.collectAsState()
     val movie = state.meta
-    val streamId = state.resolvedId ?: movie?.id ?: id // Resolved IMDb ID for stream/subtitle requests
+    val streamId = state.streamId(id) // Resolved IMDb ID for stream/subtitle requests
     // Include addon origin in identity so the same media ID from a different addon
     // cannot reuse another provider's resolved details state.
     val expectedContentKey = "$type:$id:${addonBaseUrl.orEmpty()}"

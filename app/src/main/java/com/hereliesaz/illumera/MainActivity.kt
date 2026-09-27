@@ -9,11 +9,9 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -41,6 +39,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.input.key.Key
@@ -63,6 +63,7 @@ import com.hereliesaz.illumera.ui.util.rememberDialogWidth
 import com.hereliesaz.illumera.ui.MainViewModel
 import com.hereliesaz.illumera.ui.components.LumeraBackground
 import com.hereliesaz.illumera.ui.details.DetailsScreen
+import com.hereliesaz.illumera.ui.details.DetailsViewModel
 import com.hereliesaz.illumera.ui.home.GridViewScreen
 import com.hereliesaz.illumera.ui.home.HomeScreen
 import com.hereliesaz.illumera.ui.watchlist.WatchlistScreen
@@ -80,12 +81,20 @@ import com.hereliesaz.illumera.ui.navigation.BackStackOps
 import com.hereliesaz.illumera.ui.navigation.CastKey
 import com.hereliesaz.illumera.ui.navigation.DetailsKey
 import com.hereliesaz.illumera.ui.navigation.GridKey
-import com.hereliesaz.illumera.ui.navigation.MainKey
+import com.hereliesaz.illumera.ui.navigation.HomeKey
+import com.hereliesaz.illumera.ui.navigation.MainRootKey
+import com.hereliesaz.illumera.ui.navigation.MainShell
+import com.hereliesaz.illumera.ui.navigation.MoviesKey
+import com.hereliesaz.illumera.ui.navigation.SearchKey
+import com.hereliesaz.illumera.ui.navigation.SeriesKey
+import com.hereliesaz.illumera.ui.navigation.SettingsKey
+import com.hereliesaz.illumera.ui.navigation.WatchlistKey
+import com.hereliesaz.illumera.ui.navigation.isMainAreaKey
+import com.hereliesaz.illumera.ui.navigation.rememberMainShellState
+import com.hereliesaz.illumera.ui.navigation.rememberMenuBackNavEntryDecorator
 import com.hereliesaz.illumera.ui.navigation.NavDestination
 import com.hereliesaz.illumera.ui.navigation.PlayerKey
 import com.hereliesaz.illumera.ui.navigation.StudioKey
-import com.hereliesaz.illumera.ui.navigation.NavDrawer
-import com.hereliesaz.illumera.ui.navigation.TopNavigationBar
 import com.hereliesaz.illumera.ui.player.PlayerScreen
 import com.hereliesaz.illumera.ui.playback.PlaybackNav
 import com.hereliesaz.illumera.ui.playback.PlaybackOrigin
@@ -431,10 +440,18 @@ private fun UpdateReadyToInstallDialog(
     }
 }
 
-private class GridRestoreState {
-    var focusedIndex: Int? = null
-    var scrollIndex: Int = 0
+/** A grid entry's focused item and scroll, read and written without recomposing the grid. */
+private class GridRestoreState(
+    var focusedIndex: Int? = null,
+    var scrollIndex: Int = 0,
     var scrollOffset: Int = 0
+) {
+    companion object {
+        val Saver: Saver<GridRestoreState, Any> = listSaver(
+            save = { listOf(it.focusedIndex ?: -1, it.scrollIndex, it.scrollOffset) },
+            restore = { GridRestoreState(it[0].takeIf { index -> index >= 0 }, it[1], it[2]) }
+        )
+    }
 }
 
 @AndroidEntryPoint
@@ -587,8 +604,8 @@ class MainActivity : ComponentActivity() {
             val currentProfile by mainViewModel.activeProfile.collectAsState()
             var sessionProfileId by rememberSaveable { mutableStateOf<Int?>(null) }
             var sessionRestoreAttemptedProfileId by rememberSaveable { mutableStateOf<Int?>(null) }
-            // The root back stack (Main, Grid, Details, Player), saved across process death.
-            val backStack = rememberNavBackStack(AppBackStackConfiguration, MainKey)
+            // The root back stack (a main screen, Grid, Details, Player), saved across process death.
+            val backStack = rememberNavBackStack(AppBackStackConfiguration, HomeKey())
             val topKey = backStack.lastOrNull()
             // Playback state lives in the activity-scoped session, so it outlives a
             // configuration change and TorrentService's callbacks always reach it.
@@ -716,88 +733,62 @@ class MainActivity : ComponentActivity() {
                         }
                     } else {
                         // MAIN APP CONTENT
-                        var currentNav by remember { mutableStateOf(NavDestination.Home) }
-                        // Bumped when Settings is re-selected from the menu while already on
-                        // Settings: re-keys SettingsScreen so any open sub-page/section resets
-                        // to the Settings root.
-                        var settingsResetKey by remember { mutableIntStateOf(0) }
+                        // The main screen is the root at the bottom of the back stack.
+                        val currentNav = BackStackOps.currentRoot(backStack).destination
+                        val showChrome = isMainAreaKey(topKey)
+                        val isMainRootTop = topKey is MainRootKey
+                        val navPosition = currentProfile?.navPosition ?: "left"
                         // Whether focus is inside Settings' content pane (vs. its section list).
                         var settingsContentFocused by remember { mutableStateOf(false) }
-                        
-                        // Grid view state. Title and config id travel in GridKey; the items
-                        // stay in memory here (MetaItem isn't saveable).
+
+                        // Grid items. Title and config id travel in GridKey; the items stay in
+                        // memory here (MetaItem isn't saveable).
                         var gridViewItems by remember { mutableStateOf<List<MetaItem>>(emptyList()) }
-                        val gridRestoreState = remember { GridRestoreState() }
-
-                        // Search focus restoration
-                        val searchMoviesViewMoreRequester = remember { FocusRequester() }
-                        val searchSeriesViewMoreRequester = remember { FocusRequester() }
-                        val searchResultsRequester = remember { FocusRequester() }
-                        var searchFocusTarget by remember { mutableStateOf<String?>(null) }
-                        var searchLastFocusedId by remember { mutableStateOf<String?>(null) }
-
 
                         // Focus Traffic Control
-                        val drawerRequesters = remember { NavDestination.values().associateWith { FocusRequester() } }
+                        val drawerRequesters = remember { NavDestination.entries.associateWith { FocusRequester() } }
                         val homeEntryRequester = remember { FocusRequester() }
                         val searchEntryRequester = remember { FocusRequester() }
                         val settingsEntryRequester = remember { FocusRequester() }
                         val watchlistEntryRequester = remember { FocusRequester() }
+                        val gridEntryRequester = remember { FocusRequester() }
 
-                        // STATE CHANGE TRIGGER:
-                        val isMainTop = topKey == MainKey
-                        LaunchedEffect(currentNav, isMainTop, settingsResetKey) {
-                            if (!isMainTop) return@LaunchedEffect
-                            when(currentNav) {
-                                // HomeScreen requests focus itself once data is ready.
-                                // Avoid requesting early into the loading placeholder, which can
-                                // cause a brief nav -> content -> nav -> content flicker.
-                                NavDestination.Home, NavDestination.Movies, NavDestination.Series -> Unit
-                                NavDestination.Search -> {
-                                    delay(200) // Increased for stability
-                                    val target = searchFocusTarget
-                                    if (target != null) {
-                                        searchFocusTarget = null
-                                        when (target) {
-                                            "movies" -> searchMoviesViewMoreRequester.requestFocus()
-                                            "series" -> searchSeriesViewMoreRequester.requestFocus()
-                                            "poster" -> searchResultsRequester.requestFocus()
-                                        }
-                                    } else {
-                                        searchEntryRequester.requestFocus()
-                                    }
-                                }
-                                NavDestination.Settings -> {
-                                    delay(200) // Increased for stability
-                                    settingsEntryRequester.requestFocus()
-                                }
-                                NavDestination.Watchlist -> {
-                                    delay(200)
-                                    watchlistEntryRequester.requestFocus()
-                                }
-                                else -> Unit
+                        val logout: () -> Unit = {
+                            sessionProfileId = null
+                            sessionRestoreAttemptedProfileId = null
+                            BackStackOps.resetToMain(backStack)
+                            themeManager.resetTheme()
+                            mainViewModel.logout()
+                        }
+
+                        // Menu selection. A main screen opens as a fresh entry, also when it is
+                        // the one showing: the old entry's state and ViewModels go with it, and
+                        // the new screen focuses its own entry point (which closes the menu).
+                        // Log Out and Exit are actions.
+                        val handleNavigate: (NavDestination) -> Unit = { destination ->
+                            when (destination) {
+                                NavDestination.Exit -> finishAffinity()
+                                NavDestination.Profile -> logout()
+                                else -> BackStackOps.navigateToMainRoot(backStack, destination)
                             }
                         }
 
-                        // Focus restoration after navPosition change (Crossfade animation)
-                        val navPosition = currentProfile?.navPosition ?: "left"
-                        LaunchedEffect(navPosition) {
-                            if (backStack.lastOrNull() == MainKey && currentNav == NavDestination.Settings) {
-                                delay(450) // Wait for Crossfade (400ms) + buffer
-                                // Re-check after the delay: the user may have navigated away from
-                                // Settings while this was pending, unmounting the FocusRequester's
-                                // only attachment point and making requestFocus() throw.
-                                // Skip if Settings already put focus back on the option that was
-                                // changed (see PersonalizationSettings' Menu Position).
-                                if (backStack.lastOrNull() == MainKey && currentNav == NavDestination.Settings && !settingsContentFocused) {
-                                    try {
-                                        settingsEntryRequester.requestFocus()
-                                    } catch (_: IllegalStateException) {
-                                    }
+                        // Closing the menu with nothing to restore focuses the screen's entry
+                        // point. runCatching guards against requestFocus() throwing when the
+                        // target isn't composed yet.
+                        val handleEnterContent: () -> Unit = {
+                            runCatching {
+                                if (topKey is GridKey) {
+                                    gridEntryRequester.requestFocus()
+                                } else when (currentNav) {
+                                    NavDestination.Home, NavDestination.Movies, NavDestination.Series -> homeEntryRequester.requestFocus()
+                                    NavDestination.Search -> searchEntryRequester.requestFocus()
+                                    NavDestination.Settings -> settingsEntryRequester.requestFocus()
+                                    NavDestination.Watchlist -> watchlistEntryRequester.requestFocus()
+                                    else -> {}
                                 }
                             }
                         }
-
 
                         // Opens a title's Details from any main screen or the grid.
                         val openDetailsFor: (MetaItem) -> Unit = { movie ->
@@ -817,8 +808,73 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // Back pops one entry. With the menu area alone on the stack Back is
-                        // not NavDisplay's: the screens, the menu and double-back-exit keep it.
+                        // Home, Movies and Series share the activity's HomeViewModel with the
+                        // grid (rows keep refreshing; the viewer's place is kept in it).
+                        @Composable
+                        fun HomeTabEntry(destination: NavDestination) {
+                            CompositionLocalProvider(LocalViewModelStoreOwner provides this@MainActivity) {
+                                val vm = hiltViewModel<HomeViewModel>()
+                                val tab = when (destination) {
+                                    NavDestination.Movies -> "movies"
+                                    NavDestination.Series -> "series"
+                                    else -> "home"
+                                }
+                                // Chosen in the menu, the screen starts at the top; coming back to
+                                // it with Back (saved state restored) keeps the viewer's place.
+                                rememberSaveable { vm.forgetPosition(); true }
+                                LaunchedEffect(tab, currentProfile?.id) { vm.loadScreen(tab, currentProfile) }
+                                HomeScreen(
+                                    tab = DashboardTab.fromString(tab),
+                                    viewModel = vm,
+                                    currentProfile = currentProfile,
+                                    entryRequester = homeEntryRequester,
+                                    drawerRequester = drawerRequesters.getValue(destination),
+                                    onMovieClick = openDetailsFor,
+                                    onViewMore = { title, items, configId ->
+                                        gridViewItems = items
+                                        BackStackOps.openGrid(backStack, title, configId)
+                                    }
+                                )
+                            }
+                        }
+
+                        // Double-back-to-exit on a main screen: two rapid back presses exit the
+                        // app (PR 5 replaces this with the settled Back policy).
+                        var lastBackPressMs by remember { mutableStateOf(0L) }
+                        val doubleBackEnabled by rememberUpdatedState(isMainRootTop && !settingsContentFocused)
+
+                        // The NavDisplay keeps one place in the tree; only the menu chrome over it
+                        // changes with the top entry and the menu layout.
+                        val shellState = rememberMainShellState()
+                        MainShell(
+                            navPosition = navPosition,
+                            showChrome = showChrome,
+                            currentDestination = currentNav,
+                            currentProfile = currentProfile,
+                            menuRequesters = drawerRequesters,
+                            onNavigate = handleNavigate,
+                            onEnterContent = handleEnterContent,
+                            onLogout = logout,
+                            onExit = { finishAffinity() },
+                            state = shellState,
+                            modifier = Modifier.onPreviewKeyEvent { event ->
+                                if (!doubleBackEnabled) return@onPreviewKeyEvent false
+                                if (event.key == Key.Back && event.type == KeyEventType.KeyDown) {
+                                    val now = SystemClock.uptimeMillis()
+                                    if (now - lastBackPressMs < DOUBLE_BACK_EXIT_WINDOW_MS) {
+                                        finishAffinity()
+                                        true
+                                    } else {
+                                        lastBackPressMs = now
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                        ) {
+                        // Back pops one entry. At a main root alone Back is not NavDisplay's: the
+                        // screens, the menu and double-back-exit keep it.
                         // No transitions, so a leaving player disposes (saving progress and
                         // releasing the decoder) at once, as before.
                         NavDisplay(
@@ -826,307 +882,103 @@ class MainActivity : ComponentActivity() {
                             onBack = { BackStackOps.pop(backStack) },
                             entryDecorators = listOf(
                                 rememberSaveableStateHolderNavEntryDecorator(),
-                                rememberViewModelStoreNavEntryDecorator()
+                                rememberViewModelStoreNavEntryDecorator(),
+                                // An open menu takes Back before the entry's screen does.
+                                rememberMenuBackNavEntryDecorator(shellState)
                             ),
                             transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                             popTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                             predictivePopTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                             entryProvider = entryProvider {
-                            entry<MainKey> {
-                            // Main screens keep the activity's ViewModels, shared with the grid.
-                            CompositionLocalProvider(LocalViewModelStoreOwner provides this@MainActivity) {
-                                // Double-back-to-exit: two rapid back presses exit the app
-                                var lastBackPressMs by remember { mutableStateOf(0L) }
-
-                                // Shared content composable
-                                // Shared navigation handler
-                                val handleNavigate: (NavDestination) -> Unit = { destination ->
-                                    if (destination == NavDestination.Exit) {
-                                        finishAffinity()
-                                    } else if (currentNav == destination) {
-                                        // Re-selecting the current destination is still a navigation:
-                                        // return it to its root and put focus into its content (which
-                                        // also closes the menu). Settings is the only main destination
-                                        // with in-place sub-pages, so it is re-created from scratch; the
-                                        // others have no sub-pages inside the menu view and just take
-                                        // focus at their entry point.
-                                        runCatching {
-                                            when (destination) {
-                                                NavDestination.Home, NavDestination.Movies, NavDestination.Series -> homeEntryRequester.requestFocus()
-                                                NavDestination.Search -> searchEntryRequester.requestFocus()
-                                                NavDestination.Settings -> {
-                                                    settingsContentFocused = false
-                                                    settingsResetKey++ // LaunchedEffect above re-focuses Settings' entry
-                                                }
-                                                NavDestination.Watchlist -> watchlistEntryRequester.requestFocus()
-                                                else -> {}
-                                            }
-                                        }
-                                    } else {
-                                        if (currentNav == NavDestination.Search) searchFocusTarget = null
-                                        if (currentNav == NavDestination.Settings) settingsContentFocused = false
-                                        currentNav = destination
-                                    }
-                                }
-
-                                // Shared enter content handler — runCatching guards against
-                                // requestFocus() throwing when the target isn't composed yet
-                                // (e.g. focus strays to the drawer mid-transition)
-                                val handleEnterContent: () -> Unit = {
+                            entry<HomeKey> { HomeTabEntry(it.destination) }
+                            entry<MoviesKey> { HomeTabEntry(it.destination) }
+                            entry<SeriesKey> { HomeTabEntry(it.destination) }
+                            entry<SearchKey> {
+                                // SearchViewModel belongs to this entry: the query and results
+                                // outlive the Details pages opened from them, and choosing Search
+                                // in the menu starts a new search.
+                                val searchMoviesViewMoreRequester = remember { FocusRequester() }
+                                val searchSeriesViewMoreRequester = remember { FocusRequester() }
+                                val searchResultsRequester = remember { FocusRequester() }
+                                var searchFocusTarget by rememberSaveable { mutableStateOf<String?>(null) }
+                                var searchLastFocusedId by rememberSaveable { mutableStateOf<String?>(null) }
+                                LaunchedEffect(Unit) {
+                                    delay(200) // Increased for stability
+                                    val target = searchFocusTarget
+                                    searchFocusTarget = null
                                     runCatching {
-                                        when(currentNav) {
-                                            NavDestination.Home, NavDestination.Movies, NavDestination.Series -> homeEntryRequester.requestFocus()
-                                            NavDestination.Search -> searchEntryRequester.requestFocus()
-                                            NavDestination.Settings -> settingsEntryRequester.requestFocus()
-                                            NavDestination.Watchlist -> watchlistEntryRequester.requestFocus()
-                                            else -> {}
+                                        when (target) {
+                                            "movies" -> searchMoviesViewMoreRequester.requestFocus()
+                                            "series" -> searchSeriesViewMoreRequester.requestFocus()
+                                            "poster" -> searchResultsRequester.requestFocus()
+                                            else -> searchEntryRequester.requestFocus()
                                         }
                                     }
                                 }
-
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .onPreviewKeyEvent { event ->
-                                            if (settingsContentFocused) return@onPreviewKeyEvent false
-                                            if (event.key == Key.Back && event.type == KeyEventType.KeyDown) {
-                                                val now = SystemClock.uptimeMillis()
-                                                if (now - lastBackPressMs < DOUBLE_BACK_EXIT_WINDOW_MS) {
-                                                    finishAffinity()
-                                                    true
-                                                } else {
-                                                    lastBackPressMs = now
-                                                    false
-                                                }
-                                            } else {
-                                                false
-                                            }
-                                        }
-                                ) {
-                                Crossfade(targetState = navPosition, animationSpec = tween(400), label = "NavSwitcher") { position ->
-                                if (position == "top") {
-                                    TopNavigationBar(
-                                        currentDestination = currentNav,
+                                val searchHomeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
+                                SearchScreen(
+                                    currentProfile = currentProfile,
+                                    watchedIds = searchHomeVm.state.collectAsState().value.watchedIds,
+                                    onMovieClick = { movie ->
+                                        searchFocusTarget = "poster"
+                                        openDetailsFor(movie)
+                                    },
+                                    onViewMore = { title, items ->
+                                        searchFocusTarget = if (title == "Movies") "movies" else "series"
+                                        gridViewItems = items
+                                        BackStackOps.openGrid(backStack, title, "")
+                                    },
+                                    moviesViewMoreRequester = searchMoviesViewMoreRequester,
+                                    seriesViewMoreRequester = searchSeriesViewMoreRequester,
+                                    resultsRequester = searchResultsRequester,
+                                    lastFocusedId = searchLastFocusedId,
+                                    onFocusedIdChange = { searchLastFocusedId = it },
+                                    entryRequester = searchEntryRequester,
+                                    drawerRequester = drawerRequesters.getValue(NavDestination.Search)
+                                )
+                            }
+                            entry<WatchlistKey> {
+                                // WatchlistViewModel and DebridLibraryViewModel belong to this entry.
+                                LaunchedEffect(Unit) {
+                                    delay(200)
+                                    runCatching { watchlistEntryRequester.requestFocus() }
+                                }
+                                val watchlistHomeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
+                                WatchlistScreen(
+                                    currentProfile = currentProfile,
+                                    entryRequester = watchlistEntryRequester,
+                                    drawerRequester = drawerRequesters.getValue(NavDestination.Watchlist),
+                                    watchedIds = watchlistHomeVm.state.collectAsState().value.watchedIds,
+                                    onMovieClick = openDetailsFor,
+                                    onPlayResolvedStream = onPlayResolvedStream
+                                )
+                            }
+                            entry<SettingsKey> {
+                                // Settings keeps the activity's ViewModels: its theme pages share
+                                // the activity's ThemeManager, which holds the live theme.
+                                DisposableEffect(Unit) { onDispose { settingsContentFocused = false } }
+                                LaunchedEffect(Unit) {
+                                    delay(200) // Increased for stability
+                                    runCatching { settingsEntryRequester.requestFocus() }
+                                }
+                                CompositionLocalProvider(LocalViewModelStoreOwner provides this@MainActivity) {
+                                    val homeVm = hiltViewModel<HomeViewModel>()
+                                    SettingsScreen(
                                         currentProfile = currentProfile,
-                                        topNavRequesters = drawerRequesters,
-                                        onNavigate = handleNavigate,
-                                        onEnterContent = handleEnterContent,
-                                        onLogout = {
-                                            sessionProfileId = null
-                                            sessionRestoreAttemptedProfileId = null
-
-                                            BackStackOps.resetToMain(backStack)
-                                            themeManager.resetTheme()
-                                            mainViewModel.logout()
+                                        onBack = {
+                                            // Leaving Settings is a navigation, not a menu
+                                            // open: Home focuses its own content once loaded.
+                                            BackStackOps.navigateToMainRoot(backStack, NavDestination.Home)
                                         },
-                                        onExit = { finishAffinity() },
-                                        content = {
-                                            when (currentNav) {
-                                                NavDestination.Home, NavDestination.Movies, NavDestination.Series -> {
-                                                    val vm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                                                    val tab = if(currentNav == NavDestination.Home) "home" else if(currentNav == NavDestination.Movies) "movies" else "series"
-                                                    val dashboardTab = DashboardTab.fromString(tab)
-
-                                                    key(tab) {
-                                                        LaunchedEffect(tab, currentProfile?.id) { vm.loadScreen(tab, currentProfile) }
-                                                        HomeScreen(
-                                                            tab = dashboardTab,
-                                                            viewModel = vm,
-                                                            currentProfile = currentProfile,
-                                                            entryRequester = homeEntryRequester,
-                                                            drawerRequester = drawerRequesters[currentNav]!!,
-                                                            onMovieClick = { movie ->
-                                                                openDetailsFor(movie)
-                                                            },
-                                                            onViewMore = { title, items, configId ->
-                                                                gridViewItems = items
-                                                                BackStackOps.openGrid(backStack, title, configId)
-                                                            }
-                                                        )
-                                                    }
-                                                }
-                                                NavDestination.Search -> {
-                                                    val searchHomeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                                                    SearchScreen(
-                                                        currentProfile = currentProfile,
-                                                        watchedIds = searchHomeVm.state.collectAsState().value.watchedIds,
-                                                        onMovieClick = { movie ->
-                                                            searchFocusTarget = "poster"
-                                                            openDetailsFor(movie)
-                                                        },
-                                                        onViewMore = { title, items ->
-                                                            searchFocusTarget = if (title == "Movies") "movies" else "series"
-                                                            gridViewItems = items
-                                                            BackStackOps.openGrid(backStack, title, "")
-                                                        },
-                                                        moviesViewMoreRequester = searchMoviesViewMoreRequester,
-                                                        seriesViewMoreRequester = searchSeriesViewMoreRequester,
-                                                        resultsRequester = searchResultsRequester,
-                                                        lastFocusedId = searchLastFocusedId,
-                                                        onFocusedIdChange = { searchLastFocusedId = it },
-                                                        entryRequester = searchEntryRequester,
-                                                        drawerRequester = drawerRequesters[NavDestination.Search]!!
-                                                    )
-                                                }
-                                                NavDestination.Profile -> {
-                                                    // logout() is a side effect, not a render — run it once via
-                                                    // LaunchedEffect rather than inline in the composable body.
-                                                    // logout() persists runtime state on IO before flipping
-                                                    // currentProfile to null, and nothing here moves currentNav
-                                                    // away from Profile in the meantime, so calling it inline
-                                                    // re-fired it on every recomposition until that IO completed.
-                                                    LaunchedEffect(Unit) {
-                                                        sessionProfileId = null
-                                                        sessionRestoreAttemptedProfileId = null
-                                                        BackStackOps.resetToMain(backStack)
-                                                        themeManager.resetTheme()
-                                                        mainViewModel.logout()
-                                                    }
-                                                }
-                                                NavDestination.Watchlist -> {
-                                                    val watchlistHomeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                                                    WatchlistScreen(
-                                                        currentProfile = currentProfile,
-                                                        entryRequester = watchlistEntryRequester,
-                                                        drawerRequester = drawerRequesters[NavDestination.Watchlist]!!,
-                                                        watchedIds = watchlistHomeVm.state.collectAsState().value.watchedIds,
-                                                        onMovieClick = { movie ->
-                                                            openDetailsFor(movie)
-                                                        },
-                                                        onPlayResolvedStream = onPlayResolvedStream
-                                                    )
-                                                }
-                                                NavDestination.Settings -> {
-                                                    val homeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                                                    key(settingsResetKey) {
-                                                        SettingsScreen(
-                                                            currentProfile = currentProfile,
-                                                            onBack = {
-                                                                // Leaving Settings is a navigation, not a menu
-                                                                // open: Home focuses its own content once loaded.
-                                                                currentNav = NavDestination.Home
-                                                            },
-                                                            entryRequester = settingsEntryRequester,
-                                                            drawerRequester = drawerRequesters[NavDestination.Settings]!!,
-                                                            onDashboardChanged = { homeVm.invalidate() },
-                                                            onContentFocusChanged = { settingsContentFocused = it }
-                                                        )
-                                                    }
-                                                }
-                                                NavDestination.Exit -> { /* App closes */ }
-                                            }
-                                        }
-                                    )
-                                } else { // position == "left"
-                                    NavDrawer(
-                                        currentDestination = currentNav,
-                                        currentProfile = currentProfile,
-                                        drawerRequesters = drawerRequesters,
-                                        onNavigate = handleNavigate,
-                                        onClose = handleEnterContent,
-                                        content = {
-                                            when (currentNav) {
-                                                NavDestination.Home, NavDestination.Movies, NavDestination.Series -> {
-                                                    val vm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                                                    val tab = if(currentNav == NavDestination.Home) "home" else if(currentNav == NavDestination.Movies) "movies" else "series"
-                                                    val dashboardTab = DashboardTab.fromString(tab)
-
-                                                    key(tab) {
-                                                        LaunchedEffect(tab, currentProfile?.id) { vm.loadScreen(tab, currentProfile) }
-                                                        HomeScreen(
-                                                            tab = dashboardTab,
-                                                            viewModel = vm,
-                                                            currentProfile = currentProfile,
-                                                            entryRequester = homeEntryRequester,
-                                                            drawerRequester = drawerRequesters[currentNav]!!,
-                                                            onMovieClick = { movie ->
-                                                                openDetailsFor(movie)
-                                                            },
-                                                            onViewMore = { title, items, configId ->
-                                                                gridViewItems = items
-                                                                BackStackOps.openGrid(backStack, title, configId)
-                                                            }
-                                                        )
-                                                    }
-                                                }
-                                                NavDestination.Search -> {
-                                                    val searchHomeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                                                    SearchScreen(
-                                                        currentProfile = currentProfile,
-                                                        watchedIds = searchHomeVm.state.collectAsState().value.watchedIds,
-                                                        onMovieClick = { movie ->
-                                                            searchFocusTarget = "poster"
-                                                            openDetailsFor(movie)
-                                                        },
-                                                        onViewMore = { title, items ->
-                                                            searchFocusTarget = if (title == "Movies") "movies" else "series"
-                                                            gridViewItems = items
-                                                            BackStackOps.openGrid(backStack, title, "")
-                                                        },
-                                                        moviesViewMoreRequester = searchMoviesViewMoreRequester,
-                                                        seriesViewMoreRequester = searchSeriesViewMoreRequester,
-                                                        resultsRequester = searchResultsRequester,
-                                                        lastFocusedId = searchLastFocusedId,
-                                                        onFocusedIdChange = { searchLastFocusedId = it },
-                                                        entryRequester = searchEntryRequester,
-                                                        drawerRequester = drawerRequesters[NavDestination.Search]!!
-                                                    )
-                                                }
-                                                NavDestination.Profile -> {
-                                                    // logout() is a side effect, not a render — run it once via
-                                                    // LaunchedEffect rather than inline in the composable body.
-                                                    // logout() persists runtime state on IO before flipping
-                                                    // currentProfile to null, and nothing here moves currentNav
-                                                    // away from Profile in the meantime, so calling it inline
-                                                    // re-fired it on every recomposition until that IO completed.
-                                                    LaunchedEffect(Unit) {
-                                                        sessionProfileId = null
-                                                        sessionRestoreAttemptedProfileId = null
-                                                        BackStackOps.resetToMain(backStack)
-                                                        themeManager.resetTheme()
-                                                        mainViewModel.logout()
-                                                    }
-                                                }
-                                                NavDestination.Watchlist -> {
-                                                    val watchlistHomeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                                                    WatchlistScreen(
-                                                        currentProfile = currentProfile,
-                                                        entryRequester = watchlistEntryRequester,
-                                                        drawerRequester = drawerRequesters[NavDestination.Watchlist]!!,
-                                                        watchedIds = watchlistHomeVm.state.collectAsState().value.watchedIds,
-                                                        onMovieClick = { movie ->
-                                                            openDetailsFor(movie)
-                                                        },
-                                                        onPlayResolvedStream = onPlayResolvedStream
-                                                    )
-                                                }
-                                                NavDestination.Settings -> {
-                                                    val homeVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                                                    key(settingsResetKey) {
-                                                        SettingsScreen(
-                                                            currentProfile = currentProfile,
-                                                            onBack = {
-                                                                // Leaving Settings is a navigation, not a menu
-                                                                // open: Home focuses its own content once loaded.
-                                                                currentNav = NavDestination.Home
-                                                            },
-                                                            entryRequester = settingsEntryRequester,
-                                                            drawerRequester = drawerRequesters[NavDestination.Settings]!!,
-                                                            onDashboardChanged = { homeVm.invalidate() },
-                                                            onContentFocusChanged = { settingsContentFocused = it }
-                                                        )
-                                                    }
-                                                }
-                                                NavDestination.Exit -> { /* App closes */ }
-                                            }
-                                        }
+                                        entryRequester = settingsEntryRequester,
+                                        drawerRequester = drawerRequesters.getValue(NavDestination.Settings),
+                                        onDashboardChanged = { homeVm.invalidate() },
+                                        onContentFocusChanged = { settingsContentFocused = it }
                                     )
                                 }
-                                } // Crossfade end
-                                } // Double-back Box end
-                            }
                             }
                             entry<GridKey> { gridKey ->
+                            // The grid pages through the activity's HomeViewModel rows.
                             CompositionLocalProvider(LocalViewModelStoreOwner provides this@MainActivity) {
                             val gridViewTitle = gridKey.title
                             val gridViewConfigId = gridKey.configId
@@ -1140,74 +992,31 @@ class MainActivity : ComponentActivity() {
                                     hasItems = gridViewTitle.isEmpty() || gridViewItems.isNotEmpty()
                                 )
                             }
-                            val gridVm = hiltViewModel<HomeViewModel>(viewModelStoreOwner = this@MainActivity)
-                            val gridNavPosition = currentProfile?.navPosition ?: "left"
-                            val gridEntryRequester = remember { FocusRequester() }
-                            val handleGridNavigate: (NavDestination) -> Unit = { destination ->
-                                if (destination == NavDestination.Exit) {
-                                    finishAffinity()
-                                } else {
-                                    currentNav = destination
-                                    BackStackOps.resetToMain(backStack)
-                                }
-                            }
-                            val gridContent: @Composable () -> Unit = {
-                                GridViewScreen(
-                                    title = gridViewTitle,
-                                    items = gridViewItems,
-                                    lastFocusedIndex = gridRestoreState.focusedIndex,
-                                    onFocusChange = { gridRestoreState.focusedIndex = it },
-                                    onMovieClick = { movie ->
-                                        openDetailsFor(movie)
-                                    },
-                                    onBack = {
-                                        gridRestoreState.focusedIndex = null
-                                        gridRestoreState.scrollIndex = 0
-                                        gridRestoreState.scrollOffset = 0
-                                        BackStackOps.pop(backStack)
-                                    },
-                                    onLoadMore = {
-                                        if (gridViewConfigId.isNotEmpty()) {
-                                            gridVm.loadMoreItems(gridViewConfigId)
-                                        }
-                                    },
-                                    initialScrollIndex = gridRestoreState.scrollIndex,
-                                    initialScrollOffset = gridRestoreState.scrollOffset,
-                                    onScrollPositionChange = { index, offset ->
-                                        gridRestoreState.scrollIndex = index
-                                        gridRestoreState.scrollOffset = offset
-                                    },
-                                    watchedIds = gridVm.state.collectAsState().value.watchedIds,
-                                    externalEntryRequester = gridEntryRequester
-                                )
-                            }
-                            if (gridNavPosition == "top") {
-                                TopNavigationBar(
-                                    currentDestination = currentNav,
-                                    currentProfile = currentProfile,
-                                    topNavRequesters = drawerRequesters,
-                                    onNavigate = handleGridNavigate,
-                                    onEnterContent = { runCatching { gridEntryRequester.requestFocus() } },
-                                    onLogout = {
-                                        sessionProfileId = null
-                                        sessionRestoreAttemptedProfileId = null
-                                        BackStackOps.resetToMain(backStack)
-                                        themeManager.resetTheme()
-                                        mainViewModel.logout()
-                                    },
-                                    onExit = { finishAffinity() },
-                                    content = gridContent
-                                )
-                            } else {
-                                NavDrawer(
-                                    currentDestination = currentNav,
-                                    currentProfile = currentProfile,
-                                    drawerRequesters = drawerRequesters,
-                                    onNavigate = handleGridNavigate,
-                                    onClose = { runCatching { gridEntryRequester.requestFocus() } },
-                                    content = gridContent
-                                )
-                            }
+                            val gridVm = hiltViewModel<HomeViewModel>()
+                            // This grid's place, kept while Details pages open over it and
+                            // dropped with the entry.
+                            val gridRestoreState = rememberSaveable(saver = GridRestoreState.Saver) { GridRestoreState() }
+                            GridViewScreen(
+                                title = gridViewTitle,
+                                items = gridViewItems,
+                                lastFocusedIndex = gridRestoreState.focusedIndex,
+                                onFocusChange = { gridRestoreState.focusedIndex = it },
+                                onMovieClick = openDetailsFor,
+                                onBack = { BackStackOps.pop(backStack) },
+                                onLoadMore = {
+                                    if (gridViewConfigId.isNotEmpty()) {
+                                        gridVm.loadMoreItems(gridViewConfigId)
+                                    }
+                                },
+                                initialScrollIndex = gridRestoreState.scrollIndex,
+                                initialScrollOffset = gridRestoreState.scrollOffset,
+                                onScrollPositionChange = { index, offset ->
+                                    gridRestoreState.scrollIndex = index
+                                    gridRestoreState.scrollOffset = offset
+                                },
+                                watchedIds = gridVm.state.collectAsState().value.watchedIds,
+                                externalEntryRequester = gridEntryRequester
+                            )
                             // Sync gridViewItems when ViewModel state updates (after loadMoreItems)
                             val vmState by gridVm.state.collectAsState()
                             LaunchedEffect(vmState.rows) {
@@ -1225,14 +1034,18 @@ class MainActivity : ComponentActivity() {
                             // (the entry's ViewModelStore). Cast, studio and recommended titles
                             // are entries pushed on top of it; Back pops them one by one.
                             var resolvedPoster by rememberSaveable { mutableStateOf(detailsKey.poster) }
+                            // This page's DetailsViewModel (the entry's store), handed to DetailsScreen.
+                            val detailsVm = hiltViewModel<DetailsViewModel>()
                             val openDetails: (String, String) -> Unit = { navType, navId ->
                                 BackStackOps.openDetails(backStack, type = navType, id = navId)
                             }
                             // What the player needs from this page: its show id (next-episode and
                             // progress ids), title, art, and where the resume hint goes back to.
+                            // The show id is the one the page builds episode playback ids from:
+                            // the IMDb id resolved behind a tmdb: key, not the key's own id.
                             fun origin(seriesTitle: String = "", logo: String = "") = PlaybackOrigin(
                                 ownerTag = detailsKey.playbackOwnerTag,
-                                showId = detailsKey.id,
+                                showId = detailsVm.state.value.streamId(detailsKey.id),
                                 title = seriesTitle.ifBlank { detailsKey.title },
                                 poster = resolvedPoster,
                                 logo = logo.ifBlank { detailsKey.logo }
@@ -1275,7 +1088,8 @@ class MainActivity : ComponentActivity() {
                                 isTrailerLoading = session.isTrailerLoading,
                                 onTrailerClick = { youtubeKey, trailerName ->
                                     session.startTrailer(origin(), youtubeKey, trailerName, detailsKey.type)
-                                }
+                                },
+                                viewModel = detailsVm
                             )
                             }
                             entry<CastKey> { castKey ->
@@ -1460,6 +1274,7 @@ class MainActivity : ComponentActivity() {
                             }
                             }
                         ) // NavDisplay end
+                        } // MainShell end
                     }
 
                     // Player choice dialog (shown when playerPreference == "ask")

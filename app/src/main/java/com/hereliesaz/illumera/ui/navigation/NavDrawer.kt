@@ -71,7 +71,11 @@ enum class NavDestination(
     Exit(R.drawable.exit_icon, "Exit", iconSize = 21.dp)
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
+/**
+ * The side menu around [content]: the content layer ([navDrawerContentLayer]) with the rail
+ * ([NavDrawerRail]) over it. MainShell composes the two parts separately so the content keeps
+ * its place in the tree when the chrome changes; this wrapper is the same pair in one piece.
+ */
 @Composable
 fun NavDrawer(
     currentDestination: NavDestination,
@@ -80,6 +84,70 @@ fun NavDrawer(
     onNavigate: (NavDestination) -> Unit,
     onClose: () -> Unit,
     content: @Composable () -> Unit
+) {
+    val contentState = rememberNavDrawerContentState()
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().navDrawerContentLayer(contentState)) {
+            content()
+        }
+        NavDrawerRail(
+            contentState = contentState,
+            currentDestination = currentDestination,
+            currentProfile = currentProfile,
+            drawerRequesters = drawerRequesters,
+            onNavigate = onNavigate,
+            onClose = onClose
+        )
+    }
+}
+
+/**
+ * What the side menu knows about the content under it: whether the content holds focus
+ * (the rail's entry guard only lets Left in from focused content), and the requester that
+ * saves and restores the content's focused element around the menu opening and closing.
+ */
+@Stable
+class NavDrawerContentState {
+    val contentFocusRequester = FocusRequester()
+    var contentHasFocus by mutableStateOf(false)
+        internal set
+
+    /** Puts focus back on the content element that had it when the menu opened. */
+    @OptIn(ExperimentalComposeUiApi::class)
+    fun restoreContentFocus(): Boolean =
+        runCatching { contentFocusRequester.restoreFocusedChild() }.getOrDefault(false)
+}
+
+@Composable
+fun rememberNavDrawerContentState(): NavDrawerContentState = remember { NavDrawerContentState() }
+
+/**
+ * The content layer under the side menu. It saves the focused content element as focus leaves
+ * the content (i.e. as the menu opens) so closing the menu can restore it. Deliberately not
+ * Modifier.focusRestorer(): that also redirects every programmatic requestFocus() on a child
+ * back to the saved element, which would hijack screens focusing their own entry points.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+fun Modifier.navDrawerContentLayer(state: NavDrawerContentState): Modifier = this
+    .onFocusChanged { state.contentHasFocus = it.hasFocus }
+    .focusProperties { onExit = { state.contentFocusRequester.saveFocusedChild() } }
+    .focusRequester(state.contentFocusRequester)
+    .focusGroup()
+
+/**
+ * The side menu's rail and its shading, drawn over content that carries
+ * [navDrawerContentLayer] with the same [contentState].
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+fun NavDrawerRail(
+    contentState: NavDrawerContentState,
+    currentDestination: NavDestination,
+    currentProfile: ProfileEntity?,
+    drawerRequesters: Map<NavDestination, FocusRequester>,
+    onNavigate: (NavDestination) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var isMenuFocused by remember { mutableStateOf(false) }
     // Touch never produces a focus event, so a touch device gets no way to trigger
@@ -102,11 +170,8 @@ fun NavDrawer(
     // back to the screen's entry requester (onClose) when there is nothing to restore
     // (e.g. the menu was opened by touch, or the element is gone). Closing never selects
     // or navigates.
-    val contentFocusRequester = remember { FocusRequester() }
-    var contentHasFocus by remember { mutableStateOf(false) }
     val closeMenu: () -> Unit = {
-        val restored = runCatching { contentFocusRequester.restoreFocusedChild() }.getOrDefault(false)
-        if (!restored) onClose()
+        if (!contentState.restoreContentFocus()) onClose()
     }
     val openMenu: () -> Unit = {
         val opened = runCatching {
@@ -142,26 +207,14 @@ fun NavDrawer(
         NavDestination.Watchlist
     )
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
 
-        // LAYER 1: Content
-        // Save the focused content element as focus leaves the content (i.e. as the menu
-        // opens) so closeMenu can restore it. Deliberately not Modifier.focusRestorer(): that
-        // also redirects every programmatic requestFocus() on a child back to the saved
-        // element, which would hijack screens focusing their own entry points.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .onFocusChanged { contentHasFocus = it.hasFocus }
-                .focusProperties { onExit = { contentFocusRequester.saveFocusedChild() } }
-                .focusRequester(contentFocusRequester)
-                .focusGroup()
-        ) {
-            content()
-        }
+        // LAYER 1 (the content) is the caller's, under this overlay: see navDrawerContentLayer.
 
         // BackHandlers are dispatched last-composed first. Register this after screen content
         // so an open drawer wins over Watchlist (and any other screen-level BackHandler).
+        // (MainShell also closes the menu from inside each back-stack entry: see
+        // rememberMenuBackNavEntryDecorator.)
         BackHandler(enabled = isMenuFocused) {
             closeMenu()
         }
@@ -303,7 +356,7 @@ fun NavDrawer(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .navDrawerFocusGuard(contentHasFocus = { contentHasFocus })
+                    .navDrawerFocusGuard(contentHasFocus = { contentState.contentHasFocus })
                     .focusGroup(),
                 horizontalAlignment = Alignment.Start
             ) {

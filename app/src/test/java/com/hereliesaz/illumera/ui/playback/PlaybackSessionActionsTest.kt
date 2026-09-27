@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import com.hereliesaz.illumera.crash.AppErrors
 import com.hereliesaz.illumera.data.debrid.DebridManager
 import com.hereliesaz.illumera.data.model.ProfileEntity
+import com.hereliesaz.illumera.data.model.stremio.MetaItem
 import com.hereliesaz.illumera.data.model.stremio.MetaVideo
 import com.hereliesaz.illumera.data.model.stremio.Stream
 import com.hereliesaz.illumera.data.model.stremio.StreamBehaviorHints
@@ -17,6 +18,8 @@ import com.hereliesaz.illumera.data.repository.AddonRepository
 import com.hereliesaz.illumera.data.repository.SubtitleRepository
 import com.hereliesaz.illumera.data.stream.StreamSortingService
 import com.hereliesaz.illumera.data.torrent.TorrentProgress
+import com.hereliesaz.illumera.domain.episodePlaybackId
+import com.hereliesaz.illumera.ui.details.DetailsViewModel
 import com.hereliesaz.illumera.ui.player.PlaybackDurationStatus
 import com.hereliesaz.illumera.ui.player.PlayerSessionResult
 import io.mockk.coEvery
@@ -601,6 +604,52 @@ class PlaybackSessionActionsTest {
         vm.end(PlayerSessionResult(10_000L, 100_000L, false, "https://cdn/b2.mkv", null, null), autoplayProfile)
         assertEquals("ttB:1:2", vm.resumeHintFor("series:ttB:2"))
         assertNull(vm.resumeHintFor("series:ttA:0"))
+    }
+
+    @Test
+    fun `a tmdb-keyed series plays under the resolved IMDb id, not the page key`() = runTest(dispatcher) {
+        val vm = session()
+        // The Details page was opened with a tmdb: key; DetailsViewModel resolved the IMDb id
+        // behind it, and the page builds its episode playback ids from that id.
+        val pageKeyId = "tmdb:1399"
+        val details = DetailsViewModel.DetailsState(
+            meta = MetaItem(id = pageKeyId, type = "series", name = "Show"),
+            resolvedId = "tt0944947"
+        )
+        val showId = details.streamId(pageKeyId)
+        assertEquals("tt0944947", showId)
+        val episodes = listOf(
+            MetaVideo(title = "One", season = 1, episode = 1),
+            MetaVideo(title = "Two", season = 1, episode = 2)
+        )
+        val playbackId = episodePlaybackId(showId, episodes[0])
+
+        vm.startFromDetails(
+            origin = PlaybackOrigin("series:$pageKeyId:0", showId, "Show", "p.jpg", ""),
+            url = "https://cdn/e1.mkv", playbackId = playbackId, playbackType = "series", playbackTitle = "One",
+            stream = Stream(url = "https://cdn/e1.mkv"), addonSubtitles = emptyList(),
+            availableStreams = emptyList(), episodes = episodes, playerPreference = null, persistProfileState = {}
+        )
+        runCurrent()
+        assertEquals("tt0944947:1:1", vm.selectedPlaybackId)
+        assertEquals("tt0944947", vm.playbackSeriesId)
+
+        // The next episode matches by id, and its stream request and saved-progress id use tt….
+        val next = vm.nextEpisode()
+        assertEquals("Two", next?.title)
+        coEvery { addonRepository.getStreams("series", "tt0944947:1:2", any(), any()) } returns
+            listOf(Stream(name = "Two", url = "https://cdn/e2.mkv"))
+        vm.autoplayNextEpisode(next!!, null, autoplayProfile)
+        runCurrent()
+
+        coVerify { addonRepository.getStreams("series", "tt0944947:1:2", any(), any()) }
+        coVerify(exactly = 0) { addonRepository.getStreams(any(), match { it.startsWith("tmdb:") }, any(), any()) }
+        assertEquals("tt0944947:1:2", vm.selectedPlaybackId)
+        assertEquals("https://cdn/e2.mkv", vm.selectedVideoUrl)
+
+        // The resume hint still goes back to the page that started it.
+        vm.end(PlayerSessionResult(10_000L, 100_000L, false, "https://cdn/e2.mkv", null, null), autoplayProfile)
+        assertEquals("tt0944947:1:2", vm.resumeHintFor("series:$pageKeyId:0"))
     }
 
     @Test

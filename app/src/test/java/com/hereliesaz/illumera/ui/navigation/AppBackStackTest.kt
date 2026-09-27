@@ -52,19 +52,19 @@ class AppBackStackTest {
 
     @Test
     fun detailsThenPlayerThenBackReturnsToDetails() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openDetails(s, type = "movie", id = "tt1")
         BackStackOps.openPlayer(s)
         assertEquals(PlayerKey, s.last())
 
         // The player's Back ends the session, which asks to return from the player.
         assertTrue(BackStackOps.returnFromPlayer(s))
-        assertEquals(listOf(MainKey, DetailsKey("movie", "tt1")), s)
+        assertEquals(listOf(HomeKey(), DetailsKey("movie", "tt1")), s)
     }
 
     @Test
     fun trailerEndReturnsToDetails() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openDetails(s, type = "series", id = "tt2")
         BackStackOps.openPlayer(s) // trailers use the same player entry
         BackStackOps.returnFromPlayer(s)
@@ -73,15 +73,15 @@ class AppBackStackTest {
 
     @Test
     fun debridLibraryPlaybackFromMainReturnsToMain() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openPlayer(s)
         BackStackOps.returnFromPlayer(s)
-        assertEquals(listOf<NavKey>(MainKey), s)
+        assertEquals(listOf<NavKey>(HomeKey()), s)
     }
 
     @Test
     fun queueAdvancePushesDetailsOnTopAndTwoBacksReachMain() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openDetails(s, type = "series", id = "tt3")
         BackStackOps.openPlayer(s)
 
@@ -95,21 +95,21 @@ class AppBackStackTest {
         assertTrue(BackStackOps.pop(s))
         assertEquals(DetailsKey("series", "tt3"), s.last())
         assertTrue(BackStackOps.pop(s))
-        assertEquals(listOf<NavKey>(MainKey), s)
+        assertEquals(listOf<NavKey>(HomeKey()), s)
         // Main alone: Back belongs to the menu area.
         assertFalse(BackStackOps.pop(s))
-        assertEquals(listOf<NavKey>(MainKey), s)
+        assertEquals(listOf<NavKey>(HomeKey()), s)
     }
 
     @Test
     fun castAndRecommendedDetailsAreFlatEntriesBackUnwindsThemInOrder() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openDetails(s, type = "movie", id = "A")
         BackStackOps.openCast(s, personId = 7, name = "Actor")
         BackStackOps.openDetails(s, type = "series", id = "B")
         BackStackOps.openPlayer(s)
         assertEquals(
-            listOf(MainKey, DetailsKey("movie", "A"), CastKey(7, "Actor"), DetailsKey("series", "B", instance = 1), PlayerKey),
+            listOf(HomeKey(), DetailsKey("movie", "A"), CastKey(7, "Actor"), DetailsKey("series", "B", instance = 1), PlayerKey),
             s
         )
 
@@ -121,12 +121,12 @@ class AppBackStackTest {
         assertTrue(BackStackOps.pop(s))
         assertEquals(DetailsKey("movie", "A"), s.last())
         assertTrue(BackStackOps.pop(s))
-        assertEquals(listOf<NavKey>(MainKey), s)
+        assertEquals(listOf<NavKey>(HomeKey()), s)
     }
 
     @Test
     fun samePersonOrStudioTwiceOnOneStackStaysTwoEntries() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openDetails(s, type = "movie", id = "A")
         BackStackOps.openCast(s, 7, "Actor")
         BackStackOps.openStudio(s, 3, "company", "Studio", "movie")
@@ -138,7 +138,7 @@ class AppBackStackTest {
 
     @Test
     fun queueAdvanceCarriesTheAutoPlayIdInTheKey() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openDetails(s, type = "series", id = "tt3")
         BackStackOps.openPlayer(s)
         BackStackOps.queueAdvance(s, type = "series", id = "tt4", title = "Next", poster = "", queueAutoPlayId = "tt4:1:1")
@@ -148,17 +148,17 @@ class AppBackStackTest {
 
     @Test
     fun gridRestoredWithoutItemsPops() {
-        val s = stack(MainKey, GridKey("Popular", "cfg"))
+        val s = stack(HomeKey(), GridKey("Popular", "cfg"))
         assertFalse(BackStackOps.dropEmptyGrid(s, hasItems = true))
         assertEquals(GridKey("Popular", "cfg"), s.last())
 
         assertTrue(BackStackOps.dropEmptyGrid(s, hasItems = false))
-        assertEquals(listOf<NavKey>(MainKey), s)
+        assertEquals(listOf<NavKey>(HomeKey()), s)
     }
 
     @Test
     fun gridThenDetailsBackReturnsToGrid() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openGrid(s, "Popular", "cfg")
         BackStackOps.openDetails(s, type = "movie", id = "tt4")
         BackStackOps.pop(s)
@@ -167,31 +167,31 @@ class AppBackStackTest {
 
     @Test
     fun returnFromPlayerLeavesOtherPagesAlone() {
-        val s = stack(MainKey, DetailsKey("movie", "tt5"))
+        val s = stack(HomeKey(), DetailsKey("movie", "tt5"))
         assertFalse(BackStackOps.returnFromPlayer(s))
         assertEquals(2, s.size)
     }
 
     @Test
     fun openPlayerTwiceKeepsOnePlayer() {
-        val s = stack(MainKey)
+        val s = stack(HomeKey())
         BackStackOps.openPlayer(s)
         BackStackOps.openPlayer(s)
-        assertEquals(listOf(MainKey, PlayerKey), s)
+        assertEquals(listOf(HomeKey(), PlayerKey), s)
     }
 
     @Test
-    fun resetToMainDropsEverythingAbove() {
-        val s = stack(MainKey, GridKey("a", ""), DetailsKey("movie", "x"), PlayerKey)
+    fun resetToMainLeavesAFreshHomeAlone() {
+        val s = stack(SettingsKey(), GridKey("a", ""), DetailsKey("movie", "x"), PlayerKey)
         BackStackOps.resetToMain(s)
-        assertEquals(listOf<NavKey>(MainKey), s)
+        assertEquals(listOf<NavKey>(HomeKey(nonce = 1)), s)
     }
 
     @Test
     fun backStackSurvivesSaveAndRestore() {
         val tester = StateRestorationTester(compose)
         var restored: NavBackStack<NavKey>? = null
-        tester.setContent { restored = rememberNavBackStack(AppBackStackConfiguration, MainKey) }
+        tester.setContent { restored = rememberNavBackStack(AppBackStackConfiguration, HomeKey()) }
         compose.runOnUiThread {
             val s = restored!!
             BackStackOps.openGrid(s, "Popular", "cfg")
@@ -224,7 +224,7 @@ class AppBackStackTest {
 
     private fun setUpDisplay(playerOwnsBack: Boolean) {
         compose.setContent {
-            backStack = rememberNavBackStack(AppBackStackConfiguration, MainKey)
+            backStack = rememberNavBackStack(AppBackStackConfiguration, HomeKey())
             NavDisplay(
                 backStack = backStack,
                 onBack = { BackStackOps.pop(backStack) },
@@ -236,7 +236,7 @@ class AppBackStackTest {
                 popTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                 predictivePopTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
                 entryProvider = entryProvider {
-                    entry<MainKey> { Text("main") }
+                    entry<HomeKey> { Text("main") }
                     entry<DetailsKey> { key ->
                         detailsTokens[key] = rememberSaveable { ++nextToken }
                         // The entry's own ViewModelStore, as DetailsScreen's hiltViewModel() gets it.
@@ -274,7 +274,7 @@ class AppBackStackTest {
     }
 
     @Test
-    fun atMainAloneNavDisplayLeavesBackToTheScreens() {
+    fun atTheRootAloneNavDisplayLeavesBackToTheScreens() {
         setUpDisplay(playerOwnsBack = true)
         assertFalse(compose.activity.onBackPressedDispatcher.hasEnabledCallbacks())
     }
@@ -284,7 +284,7 @@ class AppBackStackTest {
         setUpDisplay(playerOwnsBack = true)
         onStack { BackStackOps.openDetails(it, "movie", "tt1") }
         pressBack()
-        assertEquals(listOf<NavKey>(MainKey), backStack.toList())
+        assertEquals(listOf<NavKey>(HomeKey()), backStack.toList())
     }
 
     @Test
@@ -325,7 +325,7 @@ class AppBackStackTest {
         assertEquals(tokenA, detailsTokens.getValue(detailsA))
         assertSame(vmA, detailsVms.getValue(detailsA))
         pressBack()
-        assertEquals(listOf<NavKey>(MainKey), backStack.toList())
+        assertEquals(listOf<NavKey>(HomeKey()), backStack.toList())
     }
 
     @Test

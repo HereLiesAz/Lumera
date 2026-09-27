@@ -77,9 +77,7 @@ fun SettingsScreen(
     // full-width section list with the content sliding over it, like the
     // details screen's sources panel (GlassSidebarScaffold).
     val isCompact = LocalConfiguration.current.screenWidthDp < 600
-    // Open straight onto the content when rebuilt by a Menu Position change, so the
-    // Personalization pane (and that option) exists to take focus back.
-    var contentPanelOpen by remember { mutableStateOf(viewModel.focusMenuPositionOnReturn) }
+    var contentPanelOpen by remember { mutableStateOf(false) }
 
     val sidebarListRequester = remember { FocusRequester() }
     val contentPaneRequester = remember { FocusRequester() }
