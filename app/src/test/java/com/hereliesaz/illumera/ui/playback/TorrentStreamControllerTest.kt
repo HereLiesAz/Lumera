@@ -8,6 +8,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import io.mockk.mockk
+import com.hereliesaz.illumera.ui.player.PlayerSessionResult
 
 class TorrentStreamControllerTest {
 
@@ -42,7 +44,20 @@ class TorrentStreamControllerTest {
     private val controller = TorrentStreamController(launcher, callbacks)
 
     private fun session(handle: SavedStateHandle = SavedStateHandle()) =
-        PlaybackSessionViewModel(handle, controller)
+        newSession(handle, controller)
+
+    private fun newSession(handle: SavedStateHandle, controller: TorrentStreamController) =
+        PlaybackSessionViewModel(
+            handle, controller,
+            addonRepository = mockk(relaxed = true),
+            subtitleRepository = mockk(relaxed = true),
+            streamSortingService = mockk(relaxed = true),
+            sourceSelectionStore = mockk(relaxed = true),
+            playbackTrackSelectionStore = mockk(relaxed = true),
+            queueManager = mockk(relaxed = true),
+            debridManager = mockk(relaxed = true),
+            youTubeExtractor = mockk(relaxed = true)
+        )
 
     @Test
     fun `start launches the service and shows starting progress`() {
@@ -68,7 +83,6 @@ class TorrentStreamControllerTest {
         val vm = session()
         vm.startTorrent("magnet:a", -1, "")
         // Rotation: the composition is rebuilt, the activity-scoped session is not.
-        vm.onUiJobsCancelled()
         callbacks.ready!!("http://local/a")
         assertEquals("http://local/a", vm.selectedVideoUrl)
     }
@@ -149,7 +163,7 @@ class TorrentStreamControllerTest {
         vm.currentStream = Stream(url = "https://cdn/a.mkv")
         vm.playbackStatus = "Opening"
 
-        val restored = PlaybackSessionViewModel(SavedStateHandle(handle.keys().associateWith { handle.get<Any>(it) }), TorrentStreamController(launcher, callbacks))
+        val restored = newSession(SavedStateHandle(handle.keys().associateWith { handle.get<Any>(it) }), TorrentStreamController(launcher, callbacks))
         assertEquals("https://cdn/a.mkv", restored.selectedVideoUrl)
         assertEquals("tt1:1:2", restored.selectedPlaybackId)
         assertEquals("series", restored.selectedPlaybackType)
@@ -169,13 +183,14 @@ class TorrentStreamControllerTest {
     }
 
     @Test
-    fun `cancelled ui jobs leave no stuck episode switch`() {
+    fun `leaving the player leaves no stuck episode switch`() {
         val vm = session()
+        val result = PlayerSessionResult(0L, null, false, null, null, null)
         vm.isEpisodeSwitchLoading = true
         vm.pendingEpisodeSwitch = PendingEpisodeSwitch("p", "t", "s", streams = null, addonSubs = emptyList(), playerCurrentSourceUrl = null)
         vm.playbackStatus = "Next episode · finding sources"
         val generation = vm.episodeSwitchGeneration
-        vm.onUiJobsCancelled()
+        vm.end(result, profile = null)
         assertFalse(vm.isEpisodeSwitchLoading)
         assertNull(vm.pendingEpisodeSwitch)
         assertNull(vm.playbackStatus)
@@ -184,7 +199,7 @@ class TorrentStreamControllerTest {
         // A source list already on screen stays: the viewer can still pick from it.
         val listed = PendingEpisodeSwitch("p", "t", "s", streams = emptyList(), addonSubs = emptyList(), playerCurrentSourceUrl = null)
         vm.pendingEpisodeSwitch = listed
-        vm.onUiJobsCancelled()
+        vm.end(result, profile = null)
         assertEquals(listed, vm.pendingEpisodeSwitch)
     }
 }
