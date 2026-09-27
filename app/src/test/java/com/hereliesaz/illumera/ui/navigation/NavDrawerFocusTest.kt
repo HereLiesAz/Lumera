@@ -88,7 +88,7 @@ class NavDrawerFocusTest {
 
     private fun assertMenuClosed() {
         NavDestination.entries
-            .filter { it != NavDestination.Queue && it != NavDestination.Profile }
+            .filter { it != NavDestination.Profile }
             .forEach { menuItem(it.label).assertIsNotFocused() }
     }
 

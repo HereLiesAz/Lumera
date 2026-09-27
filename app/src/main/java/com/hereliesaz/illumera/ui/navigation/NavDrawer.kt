@@ -65,7 +65,6 @@ enum class NavDestination(
     Movies(R.drawable.movies_icon, "Movies"),
     Series(R.drawable.series_icon, "Series"),
     Watchlist(R.drawable.watchlist_icon, "Watchlist"),
-    Queue(R.drawable.watchlist_icon, "Queue"),
     Search(R.drawable.search_icon, "Search"),
     Profile(R.drawable.profile_icon, "Log Out", iconSize = 18.dp),
     Settings(R.drawable.settings_icon, "Settings"),
@@ -114,7 +113,7 @@ fun NavDrawer(
             drawerRequesters[currentDestination]?.openNavDrawer() == true
         }.getOrDefault(false)
         if (!opened) {
-            // The current destination may not have a visible item (e.g. Queue, or a
+            // The current destination may not have a visible item (e.g. one
             // destination hidden by the profile's menu settings) — fall back to Home.
             runCatching { drawerRequesters[NavDestination.Home]?.openNavDrawer() }
         }

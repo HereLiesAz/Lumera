@@ -974,9 +974,38 @@ class MainActivity : ComponentActivity() {
             var playbackStatus by remember { mutableStateOf<String?>(null) }
             // The episode an autoplay hand-off opened, until its first frame draws.
             var awaitingFirstFrameId by remember { mutableStateOf<String?>(null) }
+
+            // Starts streaming [magnet] through TorrentService and wires its callbacks to this
+            // screen's state. The callbacks are static on the service; setting them here makes
+            // this call the current owner (older attempts stop delivering).
+            fun startTorrent(
+                magnet: String,
+                fileIdx: Int,
+                fileName: String,
+                errorContext: String = "Stream error",
+                clearProgressOnError: Boolean = true,
+                onError: (String) -> Unit = {},
+                onReady: (String) -> Unit = { localUrl -> selectedVideoUrl = localUrl }
+            ) {
+                torrentProgress = TorrentProgress("Starting torrent")
+                TorrentService.onStreamReady = { localUrl ->
+                    torrentProgress = null
+                    onReady(localUrl)
+                }
+                TorrentService.onStreamError = { error ->
+                    if (clearProgressOnError) torrentProgress = null
+                    com.hereliesaz.illumera.crash.AppErrors.e("LumeraTorrent", "$errorContext: $error")
+                    onError(error)
+                }
+                TorrentService.onStreamProgress = { progress -> torrentProgress = progress }
+                startService(Intent(this@MainActivity, TorrentService::class.java).apply {
+                    putExtra("MAGNET_LINK", magnet)
+                    putExtra("FILE_IDX", fileIdx)
+                    putExtra("FILE_NAME", fileName)
+                })
+            }
             var selectedMovieTitle by rememberSaveable { mutableStateOf("") }
             var selectedMoviePoster by rememberSaveable { mutableStateOf("") }
-            var selectedMovieBackground by rememberSaveable { mutableStateOf("") }
             var selectedMovieLogo by rememberSaveable { mutableStateOf("") }
             var selectedAddonBaseUrl by rememberSaveable { mutableStateOf<String?>(null) }
             var detailsResumePlaybackHint by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1140,7 +1169,6 @@ class MainActivity : ComponentActivity() {
                         val searchEntryRequester = remember { FocusRequester() }
                         val settingsEntryRequester = remember { FocusRequester() }
                         val watchlistEntryRequester = remember { FocusRequester() }
-                        val queueEntryRequester = remember { FocusRequester() }
 
                         // STATE CHANGE TRIGGER:
                         LaunchedEffect(currentNav, activeView, settingsResetKey) {
@@ -1171,10 +1199,6 @@ class MainActivity : ComponentActivity() {
                                 NavDestination.Watchlist -> {
                                     delay(200)
                                     watchlistEntryRequester.requestFocus()
-                                }
-                                NavDestination.Queue -> {
-                                    delay(200)
-                                    queueEntryRequester.requestFocus()
                                 }
                                 else -> Unit
                             }
@@ -1227,7 +1251,6 @@ class MainActivity : ComponentActivity() {
                                                     settingsResetKey++ // LaunchedEffect above re-focuses Settings' entry
                                                 }
                                                 NavDestination.Watchlist -> watchlistEntryRequester.requestFocus()
-                                                NavDestination.Queue -> queueEntryRequester.requestFocus()
                                                 else -> {}
                                             }
                                         }
@@ -1248,7 +1271,6 @@ class MainActivity : ComponentActivity() {
                                             NavDestination.Search -> searchEntryRequester.requestFocus()
                                             NavDestination.Settings -> settingsEntryRequester.requestFocus()
                                             NavDestination.Watchlist -> watchlistEntryRequester.requestFocus()
-                                            NavDestination.Queue -> queueEntryRequester.requestFocus()
                                             else -> {}
                                         }
                                     }
@@ -1310,7 +1332,6 @@ class MainActivity : ComponentActivity() {
                                                                 selectedMovieType = movie.type
                                                                 selectedMovieTitle = movie.name
                                                                 selectedMoviePoster = movie.poster ?: ""
-                                                                selectedMovieBackground = movie.background ?: ""
                                                                 selectedMovieLogo = movie.logo ?: ""
                                                                 selectedAddonBaseUrl = movie.addonBaseUrl
                                                                 detailsResumePlaybackHint = null
@@ -1340,7 +1361,6 @@ class MainActivity : ComponentActivity() {
                                                             selectedMovieType = movie.type
                                                             selectedMovieTitle = movie.name
                                                             selectedMoviePoster = movie.poster ?: ""
-                                                            selectedMovieBackground = movie.background ?: ""
                                                             selectedMovieLogo = movie.logo ?: ""
                                                             selectedAddonBaseUrl = movie.addonBaseUrl
                                                             detailsResumePlaybackHint = null
@@ -1395,7 +1415,6 @@ class MainActivity : ComponentActivity() {
                                                             selectedMovieType = movie.type
                                                             selectedMovieTitle = movie.name
                                                             selectedMoviePoster = movie.poster ?: ""
-                                                            selectedMovieBackground = movie.background ?: ""
                                                             selectedMovieLogo = movie.logo ?: ""
                                                             selectedAddonBaseUrl = movie.addonBaseUrl
                                                             detailsResumePlaybackHint = null
@@ -1407,28 +1426,6 @@ class MainActivity : ComponentActivity() {
                                                             activeView = "details"
                                                         },
                                                         onPlayResolvedStream = onPlayResolvedStream
-                                                    )
-                                                }
-                                                NavDestination.Queue -> {
-                                                    QueueScreen(
-                                                        queueManager = queueManager,
-                                                        entryRequester = queueEntryRequester,
-                                                        onOpenItem = { item ->
-                                                            selectedMovieId = item.seriesId ?: item.id
-                                                            selectedMovieType = if (item.type == "movie") "movie" else "series"
-                                                            selectedMovieTitle = item.title
-                                                            selectedMoviePoster = item.poster ?: ""
-                                                            selectedMovieBackground = ""
-                                                            selectedMovieLogo = ""
-                                                            selectedAddonBaseUrl = null
-                                                            detailsResumePlaybackHint = null
-                                                            selectedPlaybackId = item.id
-                                                            selectedPlaybackType = selectedMovieType
-                                                            selectedPlaybackTitle = item.title
-                                                            selectedPlaybackPoster = item.poster ?: ""
-                                                            previousView = "menu"
-                                                            activeView = "details"
-                                                        }
                                                     )
                                                 }
                                                 NavDestination.Settings -> {
@@ -1479,7 +1476,6 @@ class MainActivity : ComponentActivity() {
                                                                 selectedMovieType = movie.type
                                                                 selectedMovieTitle = movie.name
                                                                 selectedMoviePoster = movie.poster ?: ""
-                                                                selectedMovieBackground = movie.background ?: ""
                                                                 selectedMovieLogo = movie.logo ?: ""
                                                                 selectedAddonBaseUrl = movie.addonBaseUrl
                                                                 detailsResumePlaybackHint = null
@@ -1509,7 +1505,6 @@ class MainActivity : ComponentActivity() {
                                                             selectedMovieType = movie.type
                                                             selectedMovieTitle = movie.name
                                                             selectedMoviePoster = movie.poster ?: ""
-                                                            selectedMovieBackground = movie.background ?: ""
                                                             selectedMovieLogo = movie.logo ?: ""
                                                             selectedAddonBaseUrl = movie.addonBaseUrl
                                                             detailsResumePlaybackHint = null
@@ -1564,7 +1559,6 @@ class MainActivity : ComponentActivity() {
                                                             selectedMovieType = movie.type
                                                             selectedMovieTitle = movie.name
                                                             selectedMoviePoster = movie.poster ?: ""
-                                                            selectedMovieBackground = movie.background ?: ""
                                                             selectedMovieLogo = movie.logo ?: ""
                                                             selectedAddonBaseUrl = movie.addonBaseUrl
                                                             detailsResumePlaybackHint = null
@@ -1576,28 +1570,6 @@ class MainActivity : ComponentActivity() {
                                                             activeView = "details"
                                                         },
                                                         onPlayResolvedStream = onPlayResolvedStream
-                                                    )
-                                                }
-                                                NavDestination.Queue -> {
-                                                    QueueScreen(
-                                                        queueManager = queueManager,
-                                                        entryRequester = queueEntryRequester,
-                                                        onOpenItem = { item ->
-                                                            selectedMovieId = item.seriesId ?: item.id
-                                                            selectedMovieType = if (item.type == "movie") "movie" else "series"
-                                                            selectedMovieTitle = item.title
-                                                            selectedMoviePoster = item.poster ?: ""
-                                                            selectedMovieBackground = ""
-                                                            selectedMovieLogo = ""
-                                                            selectedAddonBaseUrl = null
-                                                            detailsResumePlaybackHint = null
-                                                            selectedPlaybackId = item.id
-                                                            selectedPlaybackType = selectedMovieType
-                                                            selectedPlaybackTitle = item.title
-                                                            selectedPlaybackPoster = item.poster ?: ""
-                                                            previousView = "menu"
-                                                            activeView = "details"
-                                                        }
                                                     )
                                                 }
                                                 NavDestination.Settings -> {
@@ -1660,7 +1632,6 @@ class MainActivity : ComponentActivity() {
                                         selectedMovieType = movie.type
                                         selectedMovieTitle = movie.name
                                         selectedMoviePoster = movie.poster ?: ""
-                                        selectedMovieBackground = movie.background ?: ""
                                         selectedMovieLogo = movie.logo ?: ""
                                         selectedAddonBaseUrl = movie.addonBaseUrl
                                         detailsResumePlaybackHint = null
@@ -1783,25 +1754,8 @@ class MainActivity : ComponentActivity() {
                                         playerState.selectedPlayerSubtitles = subtitlePayload
                                         playerState.selectedPlayerSources = sourcePayload
                                         selectedVideoUrl = ""
-                                        torrentProgress = TorrentProgress("Starting torrent")
                                         activeView = "player"
-                                        TorrentService.onStreamReady = { localUrl ->
-                                            torrentProgress = null
-                                            selectedVideoUrl = localUrl
-                                        }
-                                        TorrentService.onStreamError = { error ->
-                                            torrentProgress = null
-                                            com.hereliesaz.illumera.crash.AppErrors.e("LumeraTorrent", "Stream error: $error")
-                                        }
-                                        TorrentService.onStreamProgress = { progress ->
-                                            torrentProgress = progress
-                                        }
-                                        val intent = Intent(this@MainActivity, TorrentService::class.java).apply {
-                                            putExtra("MAGNET_LINK", url)
-                                            putExtra("FILE_IDX", stream.fileIdx ?: -1)
-                                            putExtra("FILE_NAME", stream.behaviorHints?.filename ?: "")
-                                        }
-                                        startService(intent)
+                                        startTorrent(url, stream.fileIdx ?: -1, stream.behaviorHints?.filename ?: "")
                                     }
                                 } else {
                                     stopService(Intent(this@MainActivity, TorrentService::class.java))
@@ -2079,22 +2033,13 @@ class MainActivity : ComponentActivity() {
 
                                 if (nextUrl.startsWith("magnet:")) {
                                     selectedVideoUrl = ""
-                                    torrentProgress = TorrentProgress("Starting torrent")
-                                    TorrentService.onStreamReady = { localUrl ->
-                                        torrentProgress = null
-                                        selectedVideoUrl = localUrl
-                                    }
-                                    TorrentService.onStreamError = { error ->
-                                        com.hereliesaz.illumera.crash.AppErrors.e("LumeraTorrent", "Ranked fallback source error: $error")
-                                        // TorrentProgress(sourceError=true) is the one signal that
-                                        // advances the ranked list; do not advance again here.
-                                    }
-                                    TorrentService.onStreamProgress = { torrentProgress = it }
-                                    startService(Intent(this@MainActivity, TorrentService::class.java).apply {
-                                        putExtra("MAGNET_LINK", nextUrl)
-                                        putExtra("FILE_IDX", nextStream.fileIdx ?: -1)
-                                        putExtra("FILE_NAME", nextStream.behaviorHints?.filename ?: "")
-                                    })
+                                    // TorrentProgress(sourceError=true) is the one signal that advances
+                                    // the ranked list, so an error here only logs (and keeps the progress).
+                                    startTorrent(
+                                        nextUrl, nextStream.fileIdx ?: -1, nextStream.behaviorHints?.filename ?: "",
+                                        errorContext = "Ranked fallback source error",
+                                        clearProgressOnError = false
+                                    )
                                 } else {
                                     stopService(Intent(this@MainActivity, TorrentService::class.java))
                                     selectedVideoUrl = nextUrl
@@ -2362,24 +2307,7 @@ class MainActivity : ComponentActivity() {
                                                 selectedPlaybackTitle = nextPlaybackTitle
                                                 playerState.selectedPlayerSubtitles = subtitlePayload
                                                 playerState.selectedPlayerSources = sourcePayload
-                                                torrentProgress = TorrentProgress("Starting torrent")
-                                                TorrentService.onStreamReady = { localUrl ->
-                                                    torrentProgress = null
-                                                    selectedVideoUrl = localUrl
-                                                }
-                                                TorrentService.onStreamError = { error ->
-                                                    torrentProgress = null
-                                                    com.hereliesaz.illumera.crash.AppErrors.e("LumeraTorrent", "Stream error: $error")
-                                                }
-                                                TorrentService.onStreamProgress = { progress ->
-                                                    torrentProgress = progress
-                                                }
-                                                val intent = Intent(this@MainActivity, TorrentService::class.java).apply {
-                                                    putExtra("MAGNET_LINK", nextUrl)
-                                                    putExtra("FILE_IDX", streamToPlay.fileIdx ?: -1)
-                                                    putExtra("FILE_NAME", streamToPlay.behaviorHints?.filename ?: "")
-                                                }
-                                                startService(intent)
+                                                startTorrent(nextUrl, streamToPlay.fileIdx ?: -1, streamToPlay.behaviorHints?.filename ?: "")
                                             } else {
                                                 stopService(Intent(this@MainActivity, TorrentService::class.java))
                                                 selectedPlaybackId = nextPlaybackId
@@ -2556,24 +2484,7 @@ class MainActivity : ComponentActivity() {
                                                 selectedPlaybackTitle = epTitle
                                                 playerState.selectedPlayerSubtitles = subtitlePayload
                                                 playerState.selectedPlayerSources = sourcePayload
-                                                torrentProgress = TorrentProgress("Starting torrent")
-                                                TorrentService.onStreamReady = { localUrl ->
-                                                    torrentProgress = null
-                                                    selectedVideoUrl = localUrl
-                                                }
-                                                TorrentService.onStreamError = { error ->
-                                                    torrentProgress = null
-                                                    com.hereliesaz.illumera.crash.AppErrors.e("LumeraTorrent", "Stream error: $error")
-                                                }
-                                                TorrentService.onStreamProgress = { progress ->
-                                                    torrentProgress = progress
-                                                }
-                                                val intent = Intent(this@MainActivity, TorrentService::class.java).apply {
-                                                    putExtra("MAGNET_LINK", epUrl)
-                                                    putExtra("FILE_IDX", streamToPlay.fileIdx ?: -1)
-                                                    putExtra("FILE_NAME", streamToPlay.behaviorHints?.filename ?: "")
-                                                }
-                                                startService(intent)
+                                                startTorrent(epUrl, streamToPlay.fileIdx ?: -1, streamToPlay.behaviorHints?.filename ?: "")
                                             } else {
                                                 stopService(Intent(this@MainActivity, TorrentService::class.java))
                                                 selectedPlaybackId = epPlaybackId
@@ -2652,24 +2563,7 @@ class MainActivity : ComponentActivity() {
                                                 selectedPlaybackTitle = pending.playbackTitle
                                                 playerState.selectedPlayerSubtitles = subtitlePayload
                                                 playerState.selectedPlayerSources = sourcePayload
-                                                torrentProgress = TorrentProgress("Starting torrent")
-                                                TorrentService.onStreamReady = { localUrl ->
-                                                    torrentProgress = null
-                                                    selectedVideoUrl = localUrl
-                                                }
-                                                TorrentService.onStreamError = { error ->
-                                                    torrentProgress = null
-                                                    com.hereliesaz.illumera.crash.AppErrors.e("LumeraTorrent", "Stream error: $error")
-                                                }
-                                                TorrentService.onStreamProgress = { progress ->
-                                                    torrentProgress = progress
-                                                }
-                                                val intent = Intent(this@MainActivity, TorrentService::class.java).apply {
-                                                    putExtra("MAGNET_LINK", sourceUrl)
-                                                    putExtra("FILE_IDX", streamToPlay.fileIdx ?: -1)
-                                                    putExtra("FILE_NAME", streamToPlay.behaviorHints?.filename ?: "")
-                                                }
-                                                startService(intent)
+                                                startTorrent(sourceUrl, streamToPlay.fileIdx ?: -1, streamToPlay.behaviorHints?.filename ?: "")
                                             } else {
                                                 stopService(Intent(this@MainActivity, TorrentService::class.java))
                                                 selectedPlaybackId = pending.playbackId
@@ -2708,25 +2602,12 @@ class MainActivity : ComponentActivity() {
                                     playerState.pendingSourceSelection?.candidateStreams
                                         ?.firstOrNull { resolvePlayableSourceUrl(it) == magnetUrl }
                                         ?.let { playerState.currentStream = it }
-                                    torrentProgress = TorrentProgress("Starting torrent")
-                                    TorrentService.onStreamReady = { localUrl ->
-                                        torrentProgress = null
-                                        onReady(localUrl)
-                                    }
-                                    TorrentService.onStreamError = { error ->
-                                        torrentProgress = null
-                                        com.hereliesaz.illumera.crash.AppErrors.e("LumeraTorrent", "Source switch error: $error")
-                                        onError(error)
-                                    }
-                                    TorrentService.onStreamProgress = { progress ->
-                                        torrentProgress = progress
-                                    }
-                                    val intent = Intent(this@MainActivity, TorrentService::class.java).apply {
-                                        putExtra("MAGNET_LINK", magnetUrl)
-                                        putExtra("FILE_IDX", sourceFileIdx)
-                                        putExtra("FILE_NAME", sourceFileName)
-                                    }
-                                    startService(intent)
+                                    startTorrent(
+                                        magnetUrl, sourceFileIdx, sourceFileName,
+                                        errorContext = "Source switch error",
+                                        onError = onError,
+                                        onReady = onReady
+                                    )
                                 },
                                 torrentProgress = torrentProgress,
                                 playbackStatus = playbackStatus,
@@ -2780,7 +2661,6 @@ class MainActivity : ComponentActivity() {
                                             selectedMovieType = if (next.type == "movie") "movie" else "series"
                                             selectedMovieTitle = next.title
                                             selectedMoviePoster = next.poster ?: ""
-                                            selectedMovieBackground = ""
                                             selectedMovieLogo = ""
                                             selectedAddonBaseUrl = null
                                             selectedPlaybackId = next.id
