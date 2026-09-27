@@ -141,7 +141,6 @@ fun DetailsScreen(
     onPosterResolved: (poster: String) -> Unit = {},
     onTrailerClick: (youtubeKey: String, trailerName: String) -> Unit = { _, _ -> },
     isTrailerLoading: Boolean = false,
-    trailerReturnToken: Int = 0,
     viewModel: DetailsViewModel = hiltViewModel(key = "details_${type}_${id}")
 ) {
     LaunchedEffect(type, id, addonBaseUrl) { viewModel.loadDetails(type, id, addonBaseUrl) }
@@ -286,15 +285,6 @@ fun DetailsScreen(
                 // First load: focus hero button
                 runCatching { firstButtonFocusRequester.requestFocus() }
             }
-        }
-    }
-
-    // Restore focus when returning from trailer playback
-    LaunchedEffect(trailerReturnToken) {
-        if (trailerReturnToken > 0 && restoreRowKey != null) {
-            runCatching { restoreFocusRequester.requestFocus() }
-            restoreRowKey = null
-            restoreIndex = -1
         }
     }
 

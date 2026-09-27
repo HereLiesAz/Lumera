@@ -52,15 +52,15 @@ internal const val AUTOPLAY_STALL_MS = 45_000L
 internal const val AUTOPLAY_FIRST_FRAME_MS = 60_000L
 
 /**
- * What the session asks the screen host to do. MainActivity collects these and moves its
- * views exactly as the playback code used to do inline.
+ * What the session asks the screen host to do. MainActivity collects these and moves the
+ * root back stack (see BackStackOps).
  */
 sealed interface PlaybackNav {
     /** Show the internal player. */
     data object OpenPlayer : PlaybackNav
 
-    /** Leave the player for [target]; [trailerEnded] when it was a trailer (Details restores its focus). */
-    data class ReturnFromPlayer(val target: String = "details", val trailerEnded: Boolean = false) : PlaybackNav
+    /** Leave the player for the page under it; [trailerEnded] when it was a trailer. */
+    data class ReturnFromPlayer(val trailerEnded: Boolean = false) : PlaybackNav
 
     /** The queue moved on: open the next item's Details, which starts it by [queueAutoPlayId]. */
     data class OpenDetails(
@@ -750,7 +750,7 @@ class PlaybackSessionViewModel @Inject constructor(
         if (nextStream == null) {
             playbackStatus = null
             pendingSourceSelection = null
-            navChannel.trySend(PlaybackNav.ReturnFromPlayer("details"))
+            navChannel.trySend(PlaybackNav.ReturnFromPlayer())
             return
         }
         val nextPosition = candidates.indexOf(nextStream) + 1
@@ -759,7 +759,7 @@ class PlaybackSessionViewModel @Inject constructor(
         val nextUrl = resolvePlayableSourceUrl(nextStream)
         if (nextUrl == null) {
             playbackStatus = null
-            navChannel.trySend(PlaybackNav.ReturnFromPlayer("details"))
+            navChannel.trySend(PlaybackNav.ReturnFromPlayer())
             return
         }
         currentStream = nextStream
@@ -810,7 +810,7 @@ class PlaybackSessionViewModel @Inject constructor(
         settle(sessionResult, profile)
         stopTorrent()
         if (selectedPlaybackId.startsWith("trailer_")) {
-            navChannel.trySend(PlaybackNav.ReturnFromPlayer("details", trailerEnded = true))
+            navChannel.trySend(PlaybackNav.ReturnFromPlayer(trailerEnded = true))
         } else if (sessionResult.isCompleted && queueManager.state.value.preferences.enabled) {
             val next = queueManager.advanceAfterPlayback(selectedPlaybackId)
             if (next != null) {
@@ -835,10 +835,10 @@ class PlaybackSessionViewModel @Inject constructor(
             } else {
                 queueWholeShowActive = false
                 queuePlaybackActive = false
-                navChannel.trySend(PlaybackNav.ReturnFromPlayer("details"))
+                navChannel.trySend(PlaybackNav.ReturnFromPlayer())
             }
         } else {
-            navChannel.trySend(PlaybackNav.ReturnFromPlayer("details"))
+            navChannel.trySend(PlaybackNav.ReturnFromPlayer())
         }
     }
 

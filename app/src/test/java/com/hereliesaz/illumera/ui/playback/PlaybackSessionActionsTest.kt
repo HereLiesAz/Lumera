@@ -424,7 +424,7 @@ class PlaybackSessionActionsTest {
         vm.onSuspectSource(PlaybackDurationStatus.SOURCE_ERROR, autoplayProfile)
         runCurrent()
 
-        assertEquals(listOf<PlaybackNav>(PlaybackNav.ReturnFromPlayer("details")), events)
+        assertEquals(listOf<PlaybackNav>(PlaybackNav.ReturnFromPlayer()), events)
         assertNull(vm.pendingSourceSelection)
         assertNull(vm.playbackStatus)
     }
@@ -455,7 +455,7 @@ class PlaybackSessionActionsTest {
         assertNull(vm.pendingSourceSelection)
         assertEquals("tt1:1:1", vm.detailsResumePlaybackHint)
         assertEquals(1, launcher.stops)
-        assertEquals(listOf<PlaybackNav>(PlaybackNav.ReturnFromPlayer("details")), events)
+        assertEquals(listOf<PlaybackNav>(PlaybackNav.ReturnFromPlayer()), events)
     }
 
     @Test
@@ -487,7 +487,7 @@ class PlaybackSessionActionsTest {
 
         vm.end(PlayerSessionResult(3_000L, null, true, null, null, null), autoplayProfile)
 
-        assertEquals(listOf<PlaybackNav>(PlaybackNav.ReturnFromPlayer("details", trailerEnded = true)), events)
+        assertEquals(listOf<PlaybackNav>(PlaybackNav.ReturnFromPlayer(trailerEnded = true)), events)
     }
 
     @Test
@@ -529,7 +529,7 @@ class PlaybackSessionActionsTest {
 
         assertFalse(vm.queuePlaybackActive)
         assertFalse(vm.queueWholeShowActive)
-        assertEquals(listOf<PlaybackNav>(PlaybackNav.ReturnFromPlayer("details")), events)
+        assertEquals(listOf<PlaybackNav>(PlaybackNav.ReturnFromPlayer()), events)
     }
 
     // ---- Starting playback ----
