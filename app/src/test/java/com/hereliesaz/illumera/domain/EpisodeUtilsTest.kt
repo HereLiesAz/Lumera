@@ -130,4 +130,35 @@ class EpisodeUtilsTest {
 
         assertEquals("two", findNextEpisode("show", "show:1:1", episodes)?.id)
     }
+
+    @Test
+    fun findNextEpisodeFollowsTheVariantBeingPlayed() {
+        val cutA = MetaVideo(id = "cut-a", season = 1, episode = 1, released = "2000-01-01")
+        val cutB = MetaVideo(id = "cut-b", season = 1, episode = 1, released = "2000-01-01")
+        val two = MetaVideo(id = "two", season = 1, episode = 2, released = "2000-01-01")
+        val episodes = listOf(cutA, cutB, two)
+
+        val playing = episodePlaybackId("show", cutB, episodes)
+        assertEquals("show:variant=cut-b:1:1", playing)
+        assertEquals("two", findNextEpisode("show", playing, episodes)?.id)
+        // The other cut of the same episode is never its "next".
+        assertEquals("two", findNextEpisode("show", episodePlaybackId("show", cutA, episodes), episodes)?.id)
+    }
+
+    @Test
+    fun findNextEpisodeStaysFastOnVeryLongShows() {
+        // Every episode has two variants: the old per-episode recount made this quadratic.
+        val episodes = (1..3_000).flatMap { n ->
+            listOf(
+                MetaVideo(id = "a$n", season = 1, episode = n, released = "2000-01-01"),
+                MetaVideo(id = "b$n", season = 1, episode = n, released = "2000-01-01")
+            )
+        }
+        val playing = episodePlaybackId("show", episodes[5_990], episodes)
+        val start = System.nanoTime()
+        val next = findNextEpisode("show", playing, episodes)
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+        assertEquals(2_997, next?.episode)
+        assertTrue("took ${elapsedMs}ms", elapsedMs < 500)
+    }
 }

@@ -16,10 +16,15 @@ fun episodePlaybackId(
     episode: MetaVideo,
     siblings: List<MetaVideo>? = null
 ): String {
-    val base = "$seriesId:${episode.season}:${episode.episode}"
     val duplicateCount = siblings.orEmpty().count {
         it.season == episode.season && it.episode == episode.episode
     }
+    return episodePlaybackId(seriesId, episode, duplicateCount)
+}
+
+/** [episodePlaybackId] when the number of episodes sharing its season/episode is known. */
+private fun episodePlaybackId(seriesId: String, episode: MetaVideo, duplicateCount: Int): String {
+    val base = "$seriesId:${episode.season}:${episode.episode}"
     if (duplicateCount <= 1) return base
 
     val variantSource = episode.id.trim().takeIf { it.isNotEmpty() }
@@ -77,8 +82,11 @@ fun findNextEpisode(
         compareBy<MetaVideo> { it.season }
             .thenBy { it.episode }
     )
+    // Count each season/episode's variants once: recounting them per episode made this
+    // quadratic, and on a long show it held the main thread past the ANR limit.
+    val duplicates = episodes.groupingBy { it.season to it.episode }.eachCount()
     var currentIndex = sorted.indexOfFirst {
-        episodePlaybackId(seriesId, it, episodes) == currentPlaybackId
+        episodePlaybackId(seriesId, it, duplicates[it.season to it.episode] ?: 0) == currentPlaybackId
     }
     // Fallback: match by season/episode numbers for old-format playback IDs
     if (currentIndex < 0) {
@@ -91,8 +99,14 @@ fun findNextEpisode(
             }
         }
     }
-    if (currentIndex < 0 || currentIndex >= sorted.lastIndex) return null
-    val next = sorted[currentIndex + 1]
+    if (currentIndex < 0) return null
+    val current = sorted[currentIndex]
+    // The next episode number, not another version of this one: a show listing two cuts of
+    // an episode sorted them side by side, and autoplay replayed the episode as its "next".
+    val nextIndex = (currentIndex + 1..sorted.lastIndex).firstOrNull {
+        sorted[it].season != current.season || sorted[it].episode != current.episode
+    } ?: return null
+    val next = sorted[nextIndex]
     // Never autoplay into an episode that hasn't been released yet.
     if (!next.hasAired()) return null
     // An undated episode counts as aired only when the dates around it say so: the show has
@@ -101,7 +115,7 @@ fun findNextEpisode(
     // picked up whatever sources matched its number.
     if (next.released.isNullOrBlank()) {
         val showHasDates = regular.any { !it.released.isNullOrBlank() }
-        val laterEpisodeAired = sorted.drop(currentIndex + 2).any { !it.released.isNullOrBlank() && it.hasAired() }
+        val laterEpisodeAired = sorted.drop(nextIndex + 1).any { !it.released.isNullOrBlank() && it.hasAired() }
         if (showHasDates && !laterEpisodeAired) return null
     }
     return next

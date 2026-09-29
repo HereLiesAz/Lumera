@@ -330,7 +330,7 @@ class StremioAuthManager @Inject constructor(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            Result.failure(StremioAuthError.NetworkError(e.message ?: "Network error"))
+            Result.failure(StremioAuthError.NetworkError(e.message ?: "Network error", e))
         }
     }
 

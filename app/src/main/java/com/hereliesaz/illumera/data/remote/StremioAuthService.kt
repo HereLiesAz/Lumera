@@ -153,7 +153,10 @@ data class StremioAddonManifest(
 
 sealed class StremioAuthError : Exception() {
     data class InvalidCredentials(override val message: String = "Invalid email or password") : StremioAuthError()
-    data class NetworkError(override val message: String) : StremioAuthError()
+    data class NetworkError(
+        override val message: String,
+        override val cause: Throwable? = null
+    ) : StremioAuthError()
     data class UnknownError(override val message: String) : StremioAuthError()
 }
 
@@ -239,7 +242,7 @@ class StremioAuthService @Inject constructor() {
         } catch (e: StremioAuthError) {
             throw e
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
     
@@ -294,7 +297,7 @@ class StremioAuthService @Inject constructor() {
         } catch (e: StremioAuthError) {
             throw e
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
 
@@ -317,7 +320,7 @@ class StremioAuthService @Inject constructor() {
         } catch (e: StremioAuthError) {
             throw e
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
 
@@ -347,7 +350,7 @@ class StremioAuthService @Inject constructor() {
         } catch (e: StremioAuthError) {
             throw e
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
 
@@ -381,7 +384,7 @@ class StremioAuthService @Inject constructor() {
         } catch (e: StremioAuthError) {
             throw e
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
 
@@ -513,7 +516,7 @@ class StremioAuthService @Inject constructor() {
         } catch (e: StremioAuthError) {
             throw e
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
 
@@ -551,7 +554,7 @@ class StremioAuthService @Inject constructor() {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
 
@@ -574,7 +577,7 @@ class StremioAuthService @Inject constructor() {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
 
@@ -589,7 +592,7 @@ class StremioAuthService @Inject constructor() {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
         Unit
     }
@@ -602,7 +605,7 @@ class StremioAuthService @Inject constructor() {
                 gson.toJson(mapOf("type" to "AddonCollectionSet", "authKey" to authKey, "addons" to addons))
             )
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
         Unit
     }
@@ -627,7 +630,7 @@ class StremioAuthService @Inject constructor() {
         } catch (e: StremioAuthError) {
             throw e
         } catch (e: Exception) {
-            throw StremioAuthError.NetworkError(e.message ?: "Network error")
+            throw StremioAuthError.NetworkError(e.message ?: "Network error", e)
         }
     }
 }
