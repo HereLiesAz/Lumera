@@ -95,7 +95,9 @@ internal fun shouldAdvanceSourceForHttpStatus(
 ): Boolean = responseCode != 416 || hasRetried416
 
 // A source error this close to the end means the file finished, not that the source is bad.
-internal const val END_OF_STREAM_WINDOW_MS = 30_000L
+// Wider than ExoPlayer's read-ahead (50s by default, 30s for torrents): the read past the
+// last byte fails while the playhead is still up to that far behind it.
+internal const val END_OF_STREAM_WINDOW_MS = 60_000L
 
 internal fun isWithinEndWindow(positionMs: Long, durationMs: Long): Boolean =
     durationMs > 0L && positionMs > 0L && durationMs - positionMs <= END_OF_STREAM_WINDOW_MS
@@ -1555,14 +1557,17 @@ class ExoPlayerBackend(
         )
     }
 
-    /** An HTTP, connection or parsing error within the final [END_OF_STREAM_WINDOW_MS] of the file. */
-    private fun isSourceErrorAtEnd(error: PlaybackException): Boolean {
-        val codeName = error.errorCodeName.uppercase(Locale.US)
-        if (!codeName.startsWith("ERROR_CODE_IO_") && !codeName.contains("PARSING")) return false
+    /**
+     * Any error once playback or loading has reached the final [END_OF_STREAM_WINDOW_MS] of
+     * the file. The episode has been watched: it ends here, and never retries or switches to
+     * another source, which only replayed it.
+     */
+    private fun isSourceErrorAtEnd(@Suppress("UNUSED_PARAMETER") error: PlaybackException): Boolean {
         val player = exoPlayer ?: return false
         val duration = player.duration.takeIf { it > 0 } ?: _uiState.value.durationMs
         val position = player.currentPosition.takeIf { it > 0 } ?: _uiState.value.positionMs
-        return isWithinEndWindow(position, duration)
+        val buffered = player.bufferedPosition.takeIf { it > 0 } ?: _uiState.value.bufferedPositionMs
+        return isWithinEndWindow(maxOf(position, buffered), duration)
     }
 
     private fun isParsingErrorNearEnd(error: PlaybackException): Boolean {

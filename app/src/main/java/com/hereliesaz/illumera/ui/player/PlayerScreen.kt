@@ -28,6 +28,7 @@ import com.hereliesaz.illumera.ui.player.base.PlayerLoadRequest
 import com.hereliesaz.illumera.ui.player.base.PlayerSourceOption
 import com.hereliesaz.illumera.ui.player.base.PlayerSubtitleSource
 import com.hereliesaz.illumera.ui.player.base.SkipSegmentInfo
+import com.hereliesaz.illumera.ui.player.base.isWithinEndWindow
 import com.hereliesaz.illumera.data.model.stremio.MetaVideo
 import com.hereliesaz.illumera.data.torrent.TorrentProgress
 
@@ -311,6 +312,15 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
         handledTorrentFailureAttemptId = progress.attemptId
+
+        // A torrent that fails once the episode has played (or loaded) to its end has been
+        // watched: that is the end of the episode, never a reason to try another source.
+        val state = playbackController.uiState.value
+        if (state.isEnded ||
+            isWithinEndWindow(maxOf(state.positionMs, state.bufferedPositionMs), state.durationMs)
+        ) {
+            return@LaunchedEffect
+        }
 
         if (autoFallbackEnabled && onSuspectSource != null) {
             playbackController.pause()

@@ -355,3 +355,18 @@ internal fun handlePlayerSessionEnd(
 
     onConsumePendingSelection()
 }
+
+/** Whether [stream] plays the same file as [watched] (playing from [watchedUrl]). */
+internal fun isSameFile(stream: Stream, watched: Stream?, watchedUrl: String?): Boolean {
+    if (!watchedUrl.isNullOrBlank() && resolvePlayableSourceUrl(stream) == watchedUrl) return true
+    if (watched == null) return false
+    if (!stream.url.isNullOrBlank() && stream.url == watched.url) return true
+    val hash = stream.infoHash?.lowercase() ?: return false
+    if (hash != watched.infoHash?.lowercase()) return false
+    // Same torrent: the same file unless the index or file name says otherwise.
+    if (stream.fileIdx != null && watched.fileIdx != null) return stream.fileIdx == watched.fileIdx
+    val name = stream.behaviorHints?.filename
+    val watchedName = watched.behaviorHints?.filename
+    if (!name.isNullOrBlank() && !watchedName.isNullOrBlank()) return name == watchedName
+    return true
+}
