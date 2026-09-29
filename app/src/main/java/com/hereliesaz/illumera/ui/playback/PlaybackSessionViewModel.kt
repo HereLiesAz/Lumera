@@ -451,8 +451,16 @@ class PlaybackSessionViewModel @Inject constructor(
                 switchStep = "ranking ${rawStreams.size} sources"
 
                 // Off the main thread: ranking a long list froze the UI on TV boxes.
-                val streams = rankStreams(rawStreams, profile, offMainThread = true)
-                fetchedStreams = streams
+                val ranked = rankStreams(rawStreams, profile, offMainThread = true)
+                fetchedStreams = ranked
+                // The next episode never plays from the file just watched: a stream that
+                // resolves to it (same link, or same torrent file) would only replay it.
+                val watchedUrl = playerCurrentSourceUrl ?: selectedVideoUrl
+                val watched = currentStream
+                val streams = ranked.filterNot { isSameFile(it, watched, watchedUrl) }
+                if (streams.size < ranked.size) {
+                    AppErrors.e("Autoplay", "Skipped ${ranked.size - streams.size} source(s) for $nextPlaybackTitle that point at the episode just watched")
+                }
                 switchStep = "choosing from ${streams.size} sources"
 
                 if (streams.isEmpty()) {

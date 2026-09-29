@@ -1,6 +1,7 @@
 package com.hereliesaz.illumera.ui.playback
 
 import com.hereliesaz.illumera.data.model.stremio.Stream
+import com.hereliesaz.illumera.data.model.stremio.StreamBehaviorHints
 import com.hereliesaz.illumera.data.player.PlaybackTrackSelectionStore
 import com.hereliesaz.illumera.data.player.SourceSelectionStore
 import com.hereliesaz.illumera.ui.player.PlayerSessionResult
@@ -10,6 +11,7 @@ import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -163,5 +165,27 @@ class PlaybackPayloadsTest {
                 updateAudio = true, updateSubtitle = false, updateSubtitleDelay = true
             )
         }
+    }
+
+    // --- isSameFile ---
+
+    @Test
+    fun `a stream at the url being played is the file just watched`() {
+        assertTrue(isSameFile(direct1, null, "https://cdn/a.mkv"))
+        assertFalse(isSameFile(direct2, direct1, "https://cdn/a.mkv"))
+    }
+
+    @Test
+    fun `another file of the same torrent is not the file just watched`() {
+        assertTrue(isSameFile(torrent.copy(infoHash = "ABC123"), torrent, null))
+        assertFalse(isSameFile(torrent.copy(fileIdx = 3), torrent, null))
+    }
+
+    @Test
+    fun `a torrent without file index is told apart by file name`() {
+        fun named(name: String?) = Stream(infoHash = "abc123", behaviorHints = StreamBehaviorHints(filename = name))
+        assertFalse(isSameFile(named("S01E08.mkv"), named("S01E07.mkv"), null))
+        assertTrue(isSameFile(named("S01E07.mkv"), named("S01E07.mkv"), null))
+        assertTrue(isSameFile(named(null), named(null), null))
     }
 }
