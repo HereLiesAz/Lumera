@@ -99,4 +99,35 @@ class EpisodeUtilsTest {
 
         assertNull(findNextEpisode("show", "show:1:1", episodes))
     }
+
+    @Test
+    fun findNextEpisodeSkipsUndatedEpisodeAfterTheNewestAiredOne() {
+        val episodes = listOf(
+            MetaVideo(id = "seven", season = 1, episode = 7, released = "2000-01-01"),
+            MetaVideo(id = "eight", season = 1, episode = 8, released = null)
+        )
+
+        assertNull(findNextEpisode("show", "show:1:7", episodes))
+    }
+
+    @Test
+    fun findNextEpisodeKeepsUndatedEpisodeWhenALaterOneAired() {
+        val episodes = listOf(
+            MetaVideo(id = "one", season = 1, episode = 1, released = "2000-01-01"),
+            MetaVideo(id = "two", season = 1, episode = 2, released = null),
+            MetaVideo(id = "three", season = 1, episode = 3, released = "2000-01-15")
+        )
+
+        assertEquals("two", findNextEpisode("show", "show:1:1", episodes)?.id)
+    }
+
+    @Test
+    fun findNextEpisodeKeepsUndatedEpisodesOfAShowWithNoDates() {
+        val episodes = listOf(
+            MetaVideo(id = "one", season = 1, episode = 1),
+            MetaVideo(id = "two", season = 1, episode = 2)
+        )
+
+        assertEquals("two", findNextEpisode("show", "show:1:1", episodes)?.id)
+    }
 }

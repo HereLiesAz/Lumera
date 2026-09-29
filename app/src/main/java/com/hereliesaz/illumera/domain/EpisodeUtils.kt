@@ -94,5 +94,15 @@ fun findNextEpisode(
     if (currentIndex < 0 || currentIndex >= sorted.lastIndex) return null
     val next = sorted[currentIndex + 1]
     // Never autoplay into an episode that hasn't been released yet.
-    return next.takeIf { it.hasAired() }
+    if (!next.hasAired()) return null
+    // An undated episode counts as aired only when the dates around it say so: the show has
+    // no dates at all, or a later episode has already aired. An announced episode past the
+    // newest aired one often has no date yet; treating it as aired autoplayed into it and
+    // picked up whatever sources matched its number.
+    if (next.released.isNullOrBlank()) {
+        val showHasDates = regular.any { !it.released.isNullOrBlank() }
+        val laterEpisodeAired = sorted.drop(currentIndex + 2).any { !it.released.isNullOrBlank() && it.hasAired() }
+        if (showHasDates && !laterEpisodeAired) return null
+    }
+    return next
 }
