@@ -32,6 +32,7 @@ object AppErrors {
 
     private fun report(tag: String, message: String, error: Throwable?) {
         if (error is CancellationException) return
+        if (isOffline(error)) return
         if (!CrashReporting.isAvailable() || !ACRA.isInitialised) return
 
         val callSite = Throwable().stackTrace
@@ -45,6 +46,22 @@ object AppErrors {
         runCatching { ACRA.errorReporter.handleSilentException(handled) }
     }
 }
+
+/**
+ * The device couldn't reach the network (no DNS, no route, connection or call timed out).
+ * Logged, never filed: it says nothing about the app, and one outage filed a dozen issues.
+ */
+internal fun isOffline(error: Throwable?): Boolean =
+    generateSequence(error) { it.cause.takeIf { cause -> cause !== it } }
+        .take(10)
+        .any {
+            it is java.net.UnknownHostException ||
+                it is java.net.ConnectException ||
+                it is java.net.NoRouteToHostException ||
+                it is java.net.SocketTimeoutException ||
+                // OkHttp's call timeout ("timeout") and dropped connections.
+                it is java.io.InterruptedIOException
+        }
 
 private val URL = Regex("""\b([a-zA-Z][a-zA-Z0-9+.-]*://)(?:[^@/\s?#]*@)?([^/\s?#@]+)[^\s"')]*""")
 private val MAGNET = Regex("""magnet:\?\S+""")

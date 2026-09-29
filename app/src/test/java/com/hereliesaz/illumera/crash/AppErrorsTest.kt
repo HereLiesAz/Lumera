@@ -2,6 +2,7 @@ package com.hereliesaz.illumera.crash
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppErrorsTest {
@@ -31,5 +32,15 @@ class AppErrorsTest {
         assertEquals("java.lang.IllegalStateException: GET https://api.example/<redacted>", copy.cause.toString())
         assertFalse(copy.cause.toString().contains("key123"))
         assertEquals(inner.stackTrace.toList(), copy.cause!!.stackTrace.toList())
+    }
+
+    @Test
+    fun networkOutagesAreNotFiled() {
+        assertTrue(isOffline(RuntimeException("sync failed", java.net.UnknownHostException("api.trakt.tv"))))
+        assertTrue(isOffline(java.io.InterruptedIOException("timeout")))
+        assertTrue(isOffline(java.net.SocketTimeoutException("failed to connect after 10000ms")))
+        assertTrue(isOffline(RuntimeException("wrapped", RuntimeException("again", java.net.ConnectException()))))
+        assertFalse(isOffline(IllegalStateException("bad state")))
+        assertFalse(isOffline(null))
     }
 }
