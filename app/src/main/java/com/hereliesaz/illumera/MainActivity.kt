@@ -47,6 +47,8 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import com.hereliesaz.illumera.data.update.AppUpdateManager
+import com.hereliesaz.illumera.data.update.PlayStoreUpdateManager
+import com.hereliesaz.illumera.data.update.PlayStoreUpdateState
 import com.hereliesaz.illumera.data.update.UpdateInfo
 import com.hereliesaz.illumera.data.update.UpdateState
 import com.hereliesaz.illumera.data.player.PlaybackTrackSelectionStore
@@ -430,6 +432,54 @@ private fun UpdateReadyToInstallDialog(
     }
 }
 
+@Composable
+private fun PlayStoreUpdateAvailableDialog(
+    onUpdate: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .width(rememberDialogWidth(420))
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.background)
+                .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(16.dp))
+                .padding(24.dp)
+        ) {
+            androidx.compose.foundation.layout.Column {
+                Text(
+                    "Update Available",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "A newer version of illumera is available from Google Play. Update now to get the latest fixes and features.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray
+                )
+                Spacer(Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    VoidButton(
+                        text = "Later",
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f)
+                    )
+                    VoidButton(
+                        text = "Update",
+                        onClick = onUpdate,
+                        isPrimary = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject
@@ -441,6 +491,8 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var appUpdateManager: AppUpdateManager
     @Inject
+    lateinit var playStoreUpdateManager: PlayStoreUpdateManager
+    @Inject
     lateinit var addonDao: AddonDao
     @Inject
     lateinit var queueManager: QueueManager
@@ -450,6 +502,13 @@ class MainActivity : ComponentActivity() {
     private var splashMinTimeElapsed = false
     private var splashAppReady = false
     private val _splashFinished = mutableStateOf(false)
+
+    override fun onResume() {
+        super.onResume()
+        if (::playStoreUpdateManager.isInitialized && BuildConfig.USE_PLAY_UPDATES) {
+            playStoreUpdateManager.resumeInterruptedUpdate(playUpdateLauncher)
+        }
+    }
 
     override fun onStop() {
         super.onStop()
@@ -533,6 +592,13 @@ class MainActivity : ComponentActivity() {
     // their progress notifications only show once this permission is granted.
     private val notificationPermission =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) {}
+
+    private val playUpdateLauncher =
+        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            if (::playStoreUpdateManager.isInitialized) {
+                playStoreUpdateManager.onUpdateFlowResult(result.resultCode)
+            }
+        }
 
     /** Asks for the notification permission once; the system remembers a refusal. */
     private fun requestNotificationPermissionOnce() {
@@ -666,13 +732,18 @@ class MainActivity : ComponentActivity() {
             // Signal native splash to resume once first composition is done
             LaunchedEffect(Unit) { onSplashAppReady() }
 
-            // Auto-check for updates on launch
+            // Distribution-specific update checks on launch.
             val updateState by appUpdateManager.state.collectAsState()
+            val playUpdateState by playStoreUpdateManager.state.collectAsState()
             var updateDismissed by rememberSaveable { mutableStateOf(false) }
+            var playUpdateDismissed by rememberSaveable { mutableStateOf(false) }
             val updateScope = rememberCoroutineScope()
             LaunchedEffect(Unit) {
-            if (BuildConfig.ENABLE_SELF_UPDATE) appUpdateManager.checkForUpdate()
-        }
+                when {
+                    BuildConfig.ENABLE_SELF_UPDATE -> appUpdateManager.checkForUpdate()
+                    BuildConfig.USE_PLAY_UPDATES -> playStoreUpdateManager.checkForUpdate()
+                }
+            }
 
             LumeraTheme(theme = currentTheme) {
                 CompositionLocalProvider(
@@ -1294,6 +1365,20 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             else -> {}
+                        }
+                    }
+
+                    // Play Store builds still notify in-app, but Google Play owns
+                    // the actual download/install UX.
+                    if (BuildConfig.USE_PLAY_UPDATES && _splashFinished.value && !playUpdateDismissed) {
+                        when (playUpdateState) {
+                            is PlayStoreUpdateState.UpdateAvailable -> {
+                                PlayStoreUpdateAvailableDialog(
+                                    onUpdate = { playStoreUpdateManager.startUpdate(playUpdateLauncher) },
+                                    onDismiss = { playUpdateDismissed = true }
+                                )
+                            }
+                            else -> Unit
                         }
                     }
 

@@ -71,6 +71,7 @@ import com.hereliesaz.illumera.R
 import com.hereliesaz.illumera.data.model.ProfileEntity
 import com.hereliesaz.illumera.data.model.ThemeEntity
 import com.hereliesaz.illumera.data.update.AppUpdateManager
+import com.hereliesaz.illumera.data.update.PlayStoreUpdateState
 import com.hereliesaz.illumera.data.update.UpdateState
 import com.hereliesaz.illumera.ui.details.GlassSidebarScaffold
 import com.hereliesaz.illumera.ui.theme.ThemeManager
@@ -2110,11 +2111,18 @@ fun SourcePreferencesSettings(
 @Composable
 fun AboutSettings(
     onGoBack: () -> Unit,
-    updateManager: AppUpdateManager = hiltViewModel<AboutViewModel>().updateManager
+    viewModel: AboutViewModel = hiltViewModel()
 ) {
+    val updateManager = viewModel.updateManager
+    val playStoreUpdateManager = viewModel.playStoreUpdateManager
     val updateState by updateManager.state.collectAsState()
+    val playStoreUpdateState by playStoreUpdateManager.state.collectAsState()
     val scope = rememberCoroutineScope()
     val accentColor = MaterialTheme.colorScheme.primary
+
+    LaunchedEffect(Unit) {
+        if (BuildConfig.USE_PLAY_UPDATES) playStoreUpdateManager.checkForUpdate()
+    }
 
     Column(
         modifier = Modifier
@@ -2172,24 +2180,47 @@ fun AboutSettings(
 
         Spacer(Modifier.height(12.dp))
 
-        if (!BuildConfig.ENABLE_SELF_UPDATE) {
+        if (BuildConfig.USE_PLAY_UPDATES) {
+            val playInteraction = remember { MutableInteractionSource() }
+            val playFocused by playInteraction.collectIsFocusedAsState()
+            val playScale by animateFloatAsState(if (playFocused) 1.02f else 1f)
+            val playColors = buttonColors(focused = playFocused)
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
+                    .onPreviewKeyEvent {
+                        if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
+                            onGoBack(); true
+                        } else false
+                    }
+                    .scale(playScale)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color.White.copy(0.05f))
+                    .background(playColors.container)
+                    .border(playColors.borderWidth, playColors.border, RoundedCornerShape(8.dp))
+                    .clickable(interactionSource = playInteraction, indication = null) {
+                        playStoreUpdateManager.openPlayStoreListing()
+                    }
+                    .focusable(interactionSource = playInteraction)
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    "Updates",
-                    color = Color.White.copy(0.8f),
+                    when (playStoreUpdateState) {
+                        PlayStoreUpdateState.Checking -> "Checking Google Play..."
+                        is PlayStoreUpdateState.UpdateAvailable -> "Update available"
+                        PlayStoreUpdateState.UpToDate -> "You're up to date"
+                        PlayStoreUpdateState.InProgress -> "Update in progress"
+                        is PlayStoreUpdateState.Error -> "Open Google Play"
+                        PlayStoreUpdateState.Idle -> "Check for updates"
+                    },
+                    color = playColors.content,
                     style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium, fontSize = 15.sp)
                 )
                 Text(
-                    "Managed by Google Play",
+                    "Google Play",
                     color = accentColor,
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 )

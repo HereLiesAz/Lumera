@@ -59,6 +59,7 @@ android {
         buildConfigField("String", "GITHUB_OWNER", buildConfigString("HereLiesAz"))
         buildConfigField("String", "GITHUB_REPO", buildConfigString("illumera"))
         buildConfigField("boolean", "ENABLE_SELF_UPDATE", "true")
+        buildConfigField("boolean", "USE_PLAY_UPDATES", "false")
         // Automatic crash/ANR reporting. On by default for the GitHub (release) build
         // until illumera reaches stable production; the user can opt out in Settings.
         buildConfigField("boolean", "CRASH_REPORTING_AVAILABLE", "false")
@@ -112,6 +113,7 @@ android {
             initWith(getByName("release"))
             matchingFallbacks += listOf("release")
             buildConfigField("boolean", "ENABLE_SELF_UPDATE", "false")
+            buildConfigField("boolean", "USE_PLAY_UPDATES", "true")
             buildConfigField("boolean", "CRASH_REPORTING_AVAILABLE", "false")
         }
     }
@@ -231,6 +233,11 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.nanohttpd)
     implementation(libs.zxing.core)
+    // Google Play-distributed builds use Play's native in-app update UI.
+    // Kept in the shared artifact so the common update coordinator compiles;
+    // BuildConfig.USE_PLAY_UPDATES ensures GitHub builds never invoke it.
+    implementation("com.google.android.play:app-update:2.1.0")
+    implementation("com.google.android.play:app-update-ktx:2.1.0")
     implementation(libs.androidx.security.crypto)
     implementation(libs.acra.http)
     implementation(libs.acra.toast)
