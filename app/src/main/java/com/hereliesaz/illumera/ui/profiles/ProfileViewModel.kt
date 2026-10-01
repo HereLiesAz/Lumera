@@ -3,6 +3,7 @@ package com.hereliesaz.illumera.ui.profiles
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hereliesaz.illumera.data.auth.StremioAuthManager
+import com.hereliesaz.illumera.data.auth.StremioLibrarySyncManager
 import com.hereliesaz.illumera.data.debrid.DebridManager
 import com.hereliesaz.illumera.data.local.AddonDao
 import com.hereliesaz.illumera.data.model.ProfileEntity
@@ -38,6 +39,7 @@ class ProfileViewModel @Inject constructor(
     private val profileConfigurationManager: ProfileConfigurationManager,
     private val profileMutationCoordinator: ProfileMutationCoordinator,
     private val stremioAuthManager: StremioAuthManager,
+    private val stremioLibrarySyncManager: StremioLibrarySyncManager,
     private val debridManager: DebridManager,
     private val traktAuthManager: TraktAuthManager,
     private val queueManager: QueueManager
@@ -383,6 +385,9 @@ class ProfileViewModel @Inject constructor(
             profileMutationCoordinator.serialized {
                 dao.deleteProfileCascading(id)
                 profileConfigurationManager.deleteProfileState(id)
+                // Remove every Stremio-account baseline for this numeric profile ID so
+                // SQLite ID reuse can never inherit an old sync/deletion snapshot.
+                stremioLibrarySyncManager.clearSyncState(id)
                 debridManager.clearForProfile(id)
                 traktAuthManager.clearTokensForProfile(id)
                 queueManager.clearForProfile(id)

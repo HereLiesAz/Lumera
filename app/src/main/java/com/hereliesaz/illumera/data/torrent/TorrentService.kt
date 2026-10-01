@@ -53,6 +53,11 @@ class TorrentService : Service() {
         val fileIdx = intent.getIntExtra("FILE_IDX", -1)
         val fileName = intent.getStringExtra("FILE_NAME") ?: ""
 
+        // Give even pre-download startup failures an attempt identity. startDownload()
+        // replaces it on success; on failure this token lets the player process exactly one
+        // ranked-fallback signal without confusing it with an older torrent attempt.
+        val startupAttemptId = System.nanoTime()
+        currentAttemptId = startupAttemptId
         try {
             startForegroundService()
             startDownload(magnetLink, fileIdx, fileName)
@@ -60,6 +65,13 @@ class TorrentService : Service() {
             com.hereliesaz.illumera.crash.AppErrors.e(TAG, "Critical error starting service: ${e.message}")
             scope.launch(Dispatchers.Main) {
                 onStreamError?.invoke(e.message ?: "Failed to start torrent engine")
+                onStreamProgress?.invoke(
+                    TorrentProgress(
+                        status = "Source failed",
+                        sourceError = true,
+                        attemptId = startupAttemptId
+                    )
+                )
             }
             stopSelf()
         }
