@@ -231,7 +231,7 @@ fun WatchlistScreen(
                     startPadding = startPadding,
                     requestEntryFocus = !hasWatchlistMedia && lastQueueFocusedKey == null,
                     focusedQueueKey = lastQueueFocusedKey,
-                    restoreEntryFocusWhenFocusedKeyMissing = !hasWatchlistMedia,
+                    restoreEntryFocusWhenFocusedKeyMissing = true,
                     onQueueFocused = { key ->
                         lastQueueFocusedKey = key
                         viewModel.lastQueueFocusedKey = key

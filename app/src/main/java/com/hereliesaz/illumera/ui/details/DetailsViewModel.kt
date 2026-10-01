@@ -23,6 +23,7 @@ import com.hereliesaz.illumera.data.tmdb.TmdbMetadataService
 import com.hereliesaz.illumera.data.tmdb.TmdbService
 import com.hereliesaz.illumera.data.tmdb.TmdbVideoInfo
 import com.hereliesaz.illumera.domain.AddonSubtitle
+import com.hereliesaz.illumera.domain.canonicalEpisodeStreamId
 import com.hereliesaz.illumera.domain.episodeStreamId
 import com.hereliesaz.illumera.domain.hasAired
 import com.hereliesaz.illumera.data.trakt.TraktSyncManager
@@ -205,18 +206,21 @@ class DetailsViewModel @Inject constructor(
                 } else id
                 val preferredId = if (!addonBaseUrl.isNullOrBlank()) id else canonicalFallbackId
 
-                val details = repository.resolveMetaDetails(type, preferredId, addonBaseUrl)
-                    ?: (
-                        if (preferredId != canonicalFallbackId) {
-                            repository.resolveMetaDetails(type, canonicalFallbackId, null)
-                        } else {
-                            null
-                        }
-                    )
-                    ?: throw Exception("No meta found")
+                val details = if (!addonBaseUrl.isNullOrBlank() && preferredId != canonicalFallbackId) {
+                    // The origin addon gets one fast chance with its private catalog ID.
+                    // If that misses, fan out immediately with the canonical ID instead of
+                    // spending every addon timeout on an ID they cannot understand.
+                    repository.resolvePreferredMetaDetails(type, preferredId, addonBaseUrl)
+                        ?: repository.resolveMetaDetails(type, canonicalFallbackId, null)
+                } else {
+                    repository.resolveMetaDetails(type, preferredId, addonBaseUrl)
+                } ?: throw Exception("No meta found")
                 if (requestVersion != loadRequestVersion) return@launch
                 loadedContentKey = requestKey
-                val streamFetchId = details.id.takeIf { it.isNotBlank() } ?: preferredId
+
+                // Canonical identity owns history/watchlist/Trakt and cross-addon lookup.
+                // details.id remains the origin addon's private request ID when it differs.
+                val streamFetchId = canonicalFallbackId
                 // Publish usable details before any watch-history or enrichment work.
                 _state.value = _state.value.copy(
                     meta = details,
@@ -268,21 +272,32 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 // Prefetch streams so they're ready when the user hits Play
-                val prefetchId = if (resumePlaybackId != null) {
-                    resumePlaybackId
-                } else if (details.type == "series") {
+                val prefetchEpisode = if (details.type == "series") {
                     val numbered = details.videos
                         ?.filter { it.season > 0 && it.episode > 0 }
                         .orEmpty()
                     val aired = numbered.filter { it.hasAired() }
                     val pool = if (aired.isNotEmpty()) aired else numbered
-                    val firstEpisode = pool
-                        .minWithOrNull(compareBy<com.hereliesaz.illumera.data.model.stremio.MetaVideo> { it.season }.thenBy { it.episode })
-                    firstEpisode?.let { episodeStreamId(streamFetchId, it) } ?: streamFetchId
-                } else {
-                    streamFetchId
-                }
-                prefetchStreams(details.type, prefetchId)
+                    val resumeParts = resumePlaybackId?.let { parseSeasonEpisode(streamFetchId, it) }
+                    resumeParts?.let { (season, episode) ->
+                        pool.firstOrNull { it.season == season && it.episode == episode }
+                    } ?: pool.minWithOrNull(
+                        compareBy<com.hereliesaz.illumera.data.model.stremio.MetaVideo> { it.season }
+                            .thenBy { it.episode }
+                    )
+                } else null
+                val prefetchId = prefetchEpisode?.let {
+                    canonicalEpisodeStreamId(streamFetchId, it)
+                } ?: streamFetchId
+                val preferredPrefetchId = prefetchEpisode?.let {
+                    episodeStreamId(streamFetchId, it)
+                } ?: details.id
+                prefetchStreams(
+                    type = details.type,
+                    id = prefetchId,
+                    preferredAddonBaseUrl = details.addonBaseUrl,
+                    preferredAddonRequestId = preferredPrefetchId
+                )
             } catch (ce: CancellationException) {
                 throw ce
             } catch (e: Exception) {
@@ -336,7 +351,19 @@ class DetailsViewModel @Inject constructor(
                         episodeProgressMap = episodeProgressMap
                     )
                     if (meta.type == "series") {
-                        computeAndStoreNextUp(meta.id, meta.name, meta.poster, meta.videos)
+                        try {
+                            computeAndStoreNextUp(meta.id, meta.name, meta.poster, meta.videos)
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (e: Exception) {
+                            // Next-up is auxiliary persistence. A write failure must not
+                            // erase the resume/progress state that was just loaded successfully.
+                            com.hereliesaz.illumera.crash.AppErrors.w(
+                                "DetailsViewModel",
+                                "Next-up persistence failed",
+                                e
+                            )
+                        }
                     }
                 }
             } catch (ce: CancellationException) {
@@ -714,17 +741,41 @@ class DetailsViewModel @Inject constructor(
         episodeBrowseStore.rememberEpisode(seriesId, episode.season, episode.episode)
     }
 
-    private fun prefetchStreams(type: String, id: String) {
+    private fun streamCacheKey(
+        type: String,
+        id: String,
+        preferredAddonBaseUrl: String?,
+        preferredAddonRequestId: String?
+    ): String = listOf(type, id, preferredAddonBaseUrl.orEmpty(), preferredAddonRequestId.orEmpty())
+        .joinToString("|")
+
+    private fun prefetchStreams(
+        type: String,
+        id: String,
+        preferredAddonBaseUrl: String? = null,
+        preferredAddonRequestId: String? = null
+    ) {
         prefetchStreamsJob?.cancel()
-        val key = "$type:$id"
+        val key = streamCacheKey(type, id, preferredAddonBaseUrl, preferredAddonRequestId)
         prefetchedStreamKey = key
         prefetchStreamsJob = viewModelScope.launch {
             try {
-                val streamsDeferred = async { repository.getStreams(type, id) }
-                val subtitlesDeferred = async { subtitleRepository.getSubtitles(type, id) }
+                val streamsDeferred = async {
+                    repository.getStreams(type, id, preferredAddonBaseUrl, preferredAddonRequestId)
+                }
+                val subtitlesDeferred = async {
+                    subtitleRepository.getSubtitles(
+                        type = type,
+                        playbackId = id,
+                        preferredAddonBaseUrl = preferredAddonBaseUrl,
+                        preferredAddonRequestId = preferredAddonRequestId
+                    )
+                }
                 val streams = streamsDeferred.await()
                 val subtitles = subtitlesDeferred.await()
                 streamsCache[key] = StreamsCacheEntry(streams, subtitles, System.currentTimeMillis())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 // Prefetch failed silently — loadStreams will fetch fresh
             }
@@ -866,11 +917,27 @@ class DetailsViewModel @Inject constructor(
     /** Silently refetches streams and, only if the sources sidebar for this same item is
      *  still open, updates the visible list — never touches autoPlayStream/isLoadingStreams,
      *  since a background refresh must not yank the user away from a list they're browsing. */
-    private fun refreshStreamsInBackground(type: String, id: String, key: String, displayTitle: String) {
+    private fun refreshStreamsInBackground(
+        type: String,
+        id: String,
+        key: String,
+        displayTitle: String,
+        preferredAddonBaseUrl: String?,
+        preferredAddonRequestId: String?
+    ) {
         backgroundRefreshJob = viewModelScope.launch {
             try {
-                val streamsDeferred = async { repository.getStreams(type, id) }
-                val subtitlesDeferred = async { subtitleRepository.getSubtitles(type, id) }
+                val streamsDeferred = async {
+                    repository.getStreams(type, id, preferredAddonBaseUrl, preferredAddonRequestId)
+                }
+                val subtitlesDeferred = async {
+                    subtitleRepository.getSubtitles(
+                        type = type,
+                        playbackId = id,
+                        preferredAddonBaseUrl = preferredAddonBaseUrl,
+                        preferredAddonRequestId = preferredAddonRequestId
+                    )
+                }
                 val rawStreams = streamsDeferred.await()
                 val addonSubtitles = subtitlesDeferred.await()
                 streamsCache[key] = StreamsCacheEntry(rawStreams, addonSubtitles, System.currentTimeMillis())
@@ -895,6 +962,51 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
+    private data class StreamRequestContext(
+        val canonicalId: String,
+        val preferredAddonBaseUrl: String?,
+        val preferredAddonRequestId: String?
+    )
+
+    private fun streamRequestContext(
+        type: String,
+        requestedId: String,
+        sourceSelectionId: String
+    ): StreamRequestContext {
+        val meta = _state.value.meta
+        val canonicalId = if (meta == null) {
+            // loadStreams is also unit-tested/usable as a standalone operation. Without
+            // loaded metadata there is no trustworthy origin/canonical split to infer.
+            requestedId
+        } else if (type.equals("series", ignoreCase = true)) {
+            // sourceSelectionId is the stable tracking ID. Duplicate cuts can contain a
+            // variant= segment; strip only that private segment while keeping S/E.
+            val pieces = sourceSelectionId.split(":")
+            val season = pieces.getOrNull(pieces.lastIndex - 1)?.toIntOrNull()
+            val episode = pieces.lastOrNull()?.toIntOrNull()
+            if (season != null && episode != null) {
+                val parent = if (":variant=" in sourceSelectionId) {
+                    sourceSelectionId.substringBefore(":variant=")
+                } else {
+                    pieces.dropLast(2).joinToString(":")
+                }
+                "$parent:$season:$episode"
+            } else {
+                requestedId
+            }
+        } else {
+            _state.value.resolvedId ?: requestedId
+        }
+
+        val preferredBase = meta?.addonBaseUrl
+        val preferredId = when {
+            preferredBase.isNullOrBlank() -> null
+            type.equals("series", ignoreCase = true) -> requestedId
+            else -> meta.id
+        }
+        return StreamRequestContext(canonicalId, preferredBase, preferredId)
+    }
+
     // 2. Open Sources (Movie OR Specific Episode)
     fun loadStreams(
         type: String,
@@ -907,7 +1019,15 @@ class DetailsViewModel @Inject constructor(
     ) {
         loadStreamsJob?.cancel()
         backgroundRefreshJob?.cancel()
-        val key = "$type:$id"
+
+        val request = streamRequestContext(type, id, sourceSelectionId)
+        val requestId = request.canonicalId
+        val key = streamCacheKey(
+            type,
+            requestId,
+            request.preferredAddonBaseUrl,
+            request.preferredAddonRequestId
+        )
         val cached = streamsCache[key]
 
         // Serve a still-fresh cache instantly (no spinner) and refresh it in the background —
@@ -916,11 +1036,18 @@ class DetailsViewModel @Inject constructor(
         if (cached != null && System.currentTimeMillis() - cached.fetchedAt <= STREAMS_CACHE_TTL_MS) {
             loadStreamsJob = viewModelScope.launch {
                 applyResolvedStreams(
-                    type, id, displayTitle, sourceSelectionId, forceSourcePicker, autoSelectSource,
+                    type, requestId, displayTitle, sourceSelectionId, forceSourcePicker, autoSelectSource,
                     rememberSourceSelection, cached.streams, cached.subtitles
                 )
             }
-            refreshStreamsInBackground(type, id, key, displayTitle)
+            refreshStreamsInBackground(
+                type,
+                requestId,
+                key,
+                displayTitle,
+                request.preferredAddonBaseUrl,
+                request.preferredAddonRequestId
+            )
             return
         }
 
@@ -952,15 +1079,29 @@ class DetailsViewModel @Inject constructor(
                     rawStreams = prefetched.streams
                     addonSubtitles = prefetched.subtitles
                 } else {
-                    val streamsDeferred = async { repository.getStreams(type, id) }
-                    val subtitlesDeferred = async { subtitleRepository.getSubtitles(type, id) }
+                    val streamsDeferred = async {
+                        repository.getStreams(
+                            type,
+                            requestId,
+                            request.preferredAddonBaseUrl,
+                            request.preferredAddonRequestId
+                        )
+                    }
+                    val subtitlesDeferred = async {
+                        subtitleRepository.getSubtitles(
+                            type = type,
+                            playbackId = requestId,
+                            preferredAddonBaseUrl = request.preferredAddonBaseUrl,
+                            preferredAddonRequestId = request.preferredAddonRequestId
+                        )
+                    }
                     rawStreams = streamsDeferred.await()
                     addonSubtitles = subtitlesDeferred.await()
                     streamsCache[key] = StreamsCacheEntry(rawStreams, addonSubtitles, System.currentTimeMillis())
                 }
 
                 applyResolvedStreams(
-                    type, id, displayTitle, sourceSelectionId, forceSourcePicker, autoSelectSource,
+                    type, requestId, displayTitle, sourceSelectionId, forceSourcePicker, autoSelectSource,
                     rememberSourceSelection, rawStreams, addonSubtitles
                 )
             } catch (cancelled: CancellationException) {

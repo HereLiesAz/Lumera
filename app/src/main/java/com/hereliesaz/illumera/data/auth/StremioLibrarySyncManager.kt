@@ -16,6 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -66,22 +68,31 @@ class StremioLibrarySyncManager @Inject constructor(
             val localItems = profileConfigurationManager.withActiveProfileRuntime(profileId) {
                 buildLocalLibraryView()
             }
-            val previousLocal = loadLocalSnapshot(profileId)
+            // The baseline belongs to both the profile and the Stremio account. A profile
+            // can sign out of account A and into B; sharing A's baseline with B can otherwise
+            // turn A-only rows into deletion tombstones against B.
+            val previousLocal = loadLocalSnapshot(profileId, authKey)
             val remoteMtimes = stremioAuthService.datastoreMeta(authKey)
 
             ensureProfileStillActive(profileId)
 
             val toPush = mutableListOf<StremioLibraryItem>()
             val idsToPull = mutableListOf<String>()
-            val locallyDeletedIds = previousLocal.keys
-                .filterTo(linkedSetOf()) { it !in localItems && it in remoteMtimes }
+            val locallyDeletedIds = linkedSetOf<String>()
 
-            // A row that existed in our last successful snapshot and is now absent is
-            // a local deletion, not an invitation to resurrect the remote item. Persist
-            // enough of the prior wire item to emit a real Stremio tombstone.
+            // A missing local row is a deletion only relative to the last baseline. We do
+            // not have a durable "deleted at" timestamp for legacy history rows, so never
+            // let that inferred deletion beat a remote edit that happened after the baseline.
+            // If the remote copy changed since we last saw it, pull it; if it did not, the
+            // local absence wins and we can safely emit a fresh tombstone.
             val deletionTime = Instant.now().toString()
-            locallyDeletedIds.forEach { id ->
-                previousLocal[id]?.let { previous ->
+            previousLocal.forEach { (id, previous) ->
+                if (id in localItems) return@forEach
+                val remoteMtime = remoteMtimes[id] ?: return@forEach
+                if (isAfter(remoteMtime, previous.mtime)) {
+                    idsToPull += id
+                } else {
+                    locallyDeletedIds += id
                     toPush += previous.copy(
                         removed = true,
                         mtime = deletionTime,
@@ -120,7 +131,7 @@ class StremioLibrarySyncManager @Inject constructor(
 
                 val refreshedLocal = buildLocalLibraryView()
                     .map { (id, history) -> history.toLibraryItem(id) }
-                saveLocalSnapshot(profileId, refreshedLocal)
+                saveLocalSnapshot(profileId, authKey, refreshedLocal)
             }
 
             Log.i(TAG, "Library sync: pushed=${toPush.size}, pulled=${idsToPull.distinct().size}, deleted=${locallyDeletedIds.size}")
@@ -230,23 +241,53 @@ class StremioLibrarySyncManager @Inject constructor(
     suspend fun clearSyncState(profileId: Int) = syncMutex.withLock {
         lastSyncAtMsByProfile.remove(profileId)
         withContext(Dispatchers.IO) {
-            prefs.edit().remove("$KEY_LOCAL_SNAPSHOT_PREFIX$profileId").commit()
+            val prefix = "$KEY_LOCAL_SNAPSHOT_PREFIX${profileId}_"
+            val legacyKey = "$KEY_LOCAL_SNAPSHOT_PREFIX$profileId"
+            val editor = prefs.edit().remove(legacyKey)
+            prefs.all.keys.filter { it.startsWith(prefix) }.forEach(editor::remove)
+            editor.commit()
         }
     }
 
-    private fun loadLocalSnapshot(profileId: Int): Map<String, StremioLibraryItem> = runCatching {
-        val json = prefs.getString("$KEY_LOCAL_SNAPSHOT_PREFIX$profileId", "[]")
+    private fun snapshotKey(profileId: Int, authKey: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(authKey.toByteArray(StandardCharsets.UTF_8))
+            .take(12)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        return "$KEY_LOCAL_SNAPSHOT_PREFIX${profileId}_$digest"
+    }
+
+    private fun loadLocalSnapshot(
+        profileId: Int,
+        authKey: String
+    ): Map<String, StremioLibraryItem> = runCatching {
+        val json = prefs.getString(snapshotKey(profileId, authKey), "[]")
         val items = gson.fromJson<List<StremioLibraryItem>>(json, libraryListType).orEmpty()
         items.associateBy { it.id }
     }.getOrDefault(emptyMap())
 
-    private fun saveLocalSnapshot(profileId: Int, items: List<StremioLibraryItem>) {
+    private fun saveLocalSnapshot(
+        profileId: Int,
+        authKey: String,
+        items: List<StremioLibraryItem>
+    ) {
         val success = prefs.edit()
-            .putString("$KEY_LOCAL_SNAPSHOT_PREFIX$profileId", gson.toJson(items))
+            .putString(snapshotKey(profileId, authKey), gson.toJson(items))
             .commit()
         if (!success) {
-            com.hereliesaz.illumera.crash.AppErrors.e(TAG, "saveLocalSnapshot: commit() failed for profile $profileId — snapshot may be stale")
+            com.hereliesaz.illumera.crash.AppErrors.e(
+                TAG,
+                "saveLocalSnapshot: commit() failed for profile $profileId — snapshot may be stale"
+            )
         }
+    }
+
+    private fun isAfter(candidate: String, baseline: String): Boolean {
+        // Unknown timestamps are treated conservatively as remote-newer so an
+        // unparseable value can never authorize a destructive inferred tombstone.
+        val candidateInstant = runCatching { Instant.parse(candidate) }.getOrNull() ?: return true
+        val baselineInstant = runCatching { Instant.parse(baseline) }.getOrNull() ?: return true
+        return candidateInstant.isAfter(baselineInstant)
     }
 
     private fun parseSeriesId(id: String): String? {

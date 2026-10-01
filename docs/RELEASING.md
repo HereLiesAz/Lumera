@@ -22,13 +22,16 @@ strictly increase every run, which both Android's package installer and
 
 ## Signing
 
-Falls back to a fixed, non-secret CI keystore
-(`ci/ci-debug.keystore` — see [`../ci/README.md`](../ci/README.md)) unless
-`KEYSTORE_RAW`/`KEYSTORE_PASSWORD`/`KEY_ALIAS`/`KEY_PASSWORD` secrets are
-set on the repo, in which case it signs with those instead. Switching
-keystores is one-way for already-installed users (Android refuses to
-"upgrade" across a signing-certificate mismatch) — see that doc before
-changing it.
+Published GitHub and Play artifacts require the real release/upload keystore;
+there is no public fallback key. The centralized release workflow supplies the
+signing material, and `app/build.gradle.kts` fails distributable
+release/Play tasks when those credentials are absent rather than emitting an
+uninstallable unsigned artifact.
+
+For local signed release builds, configure the four `release.*` properties
+documented in [`../ci/README.md`](../ci/README.md). Changing signing
+certificates is not an upgrade path: Android refuses to install a differently
+signed package over an existing installation.
 
 ## The Stremio playback module rebuild
 

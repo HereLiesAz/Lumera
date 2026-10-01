@@ -62,12 +62,12 @@ class StreamSortingServiceTest {
             Stream(
                 title = "1080p release",
                 url = "english",
-                behaviorHints = StreamBehaviorHints(filename = "Movie.English.1080p.mkv")
+                behaviorHints = StreamBehaviorHints(filename = "Movie.English.Audio.1080p.mkv")
             ),
             Stream(
                 title = "1080p release",
                 url = "spanish",
-                behaviorHints = StreamBehaviorHints(filename = "Movie.Spanish.1080p.mkv")
+                behaviorHints = StreamBehaviorHints(filename = "Movie.Spanish.Audio.1080p.mkv")
             )
         )
 
@@ -100,6 +100,31 @@ class StreamSortingServiceTest {
         )
 
         assertEquals(listOf("audio-tagged"), result.mapNotNull { it.url })
+    }
+
+    @Test
+    fun forcedAudio_doesNotTreatLanguageInMovieTitleAsAudioTag() {
+        val streams = listOf(
+            Stream(
+                name = "The English Patient 1996 German Dubbed 1080p",
+                url = "german"
+            ),
+            Stream(
+                name = "The English Patient 1996 English Audio 1080p",
+                url = "english"
+            )
+        )
+
+        val result = filter(
+            streams,
+            ProfileEntity(
+                name = "Test",
+                preferredAudioLanguage = "en",
+                sourceAudioLanguageRequirement = "primary"
+            )
+        )
+
+        assertEquals(listOf("english"), result.mapNotNull { it.url })
     }
 
     @Test

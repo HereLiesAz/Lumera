@@ -164,6 +164,23 @@ android {
     }
 }
 
+// Release/Play artifacts must be installable. Debug builds remain credential-free, but
+// assembling or bundling a distributable artifact without the release keystore is an error,
+// not a silently-successful unsigned APK/AAB.
+val signingRequiredTasks = setOf("assembleRelease", "bundleRelease", "assemblePlay", "bundlePlay")
+gradle.taskGraph.whenReady { graph ->
+    val requiresSigning = graph.allTasks.any { task ->
+        task.project.path == project.path && task.name in signingRequiredTasks
+    }
+    if (requiresSigning && !hasReleaseKeystore) {
+        throw GradleException(
+            "Release signing credentials are required. Configure release.storeFile, " +
+                "release.storePassword, release.keyAlias, and release.keyPassword " +
+                "(or the matching RELEASE_* environment variables)."
+        )
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.fromTarget("21")

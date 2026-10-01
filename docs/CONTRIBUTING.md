@@ -31,15 +31,14 @@ push, not after CI tells you).
 
 - Run `./gradlew assembleDebug` (and `lint`/`test` if you touched logic
   those cover) locally first — faster feedback than waiting on CI.
-- Every PR against `main` also runs [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
-  automatically (`:app:assembleDebug`, no secrets required) and, on
-  non-draft PRs, two independent adversarial reviews —
-  [`glee-review.yml`](../.github/workflows/glee-review.yml) (Claude) and
-  [`glee-review-antigravity.yml`](../.github/workflows/glee-review-antigravity.yml)
-  (Google's Antigravity SDK) — both looking for correctness bugs,
-  unbacked claims in the PR description, and missing test coverage; see
-  [`ci/README.md`](../ci/README.md) for what each needs to actually run.
-  Neither replaces the release build's slower checks below.
+- Shared CI/review automation is centralized in [`HereLiesAz/workflows`](https://github.com/HereLiesAz/workflows)
+  and dispatched through its repository webhook gateway. The old local
+  `ci.yml`, `glee-review.yml`, `glee-review-antigravity.yml`, and
+  `glee-dual-audit.yml` files are intentionally retired; do not recreate
+  them or add model API secrets to this repository. Glee uses the canonical
+  repoless Codex audit and posts one PR audit comment. The workflow files
+  that remain here are thin trackers for active centralized jobs; see
+  [`ci/README.md`](../ci/README.md).
 - If your change touches `playbackcore/`, the Stremio AAR pipeline, or
   `gradle/libs.versions.toml`'s `media3` version, say so explicitly in the
   PR description — those changes need the full CI release build to verify

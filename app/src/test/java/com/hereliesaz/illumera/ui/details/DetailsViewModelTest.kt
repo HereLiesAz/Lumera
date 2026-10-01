@@ -80,8 +80,8 @@ class DetailsViewModelTest {
         coEvery {
             repository.resolveMetaDetails("movie", "tt1", "https://two.example")
         } returns second
-        coEvery { repository.getStreams(any(), any()) } returns emptyList()
-        coEvery { subtitleRepository.getSubtitles(any(), any()) } returns emptyList()
+        coEvery { repository.getStreams(any(), any(), any(), any()) } returns emptyList()
+        coEvery { subtitleRepository.getSubtitles(any(), any(), any(), any(), any(), any(), any()) } returns emptyList()
 
         val viewModel = newViewModel()
         viewModel.loadDetails("movie", "tt1", "https://one.example")
@@ -100,6 +100,50 @@ class DetailsViewModelTest {
         }
         coVerify(exactly = 1) {
             repository.resolveMetaDetails("movie", "tt1", "https://two.example")
+        }
+    }
+
+    @Test
+    fun canonicalIdOwnsTrackingAndCrossAddonLookupWhileOriginKeepsPrivateId() = runTest(dispatcher) {
+        coEvery { dao.getProfileById(1) } returns ProfileEntity(
+            id = 1,
+            name = "Test",
+            sourceSortingEnabled = false,
+            tmdbEnabled = true
+        )
+        val tmdbService = mockk<TmdbService>(relaxed = true)
+        every { tmdbService.normalizeMediaType("movie") } returns "movie"
+        coEvery { tmdbService.tmdbToImdb(42, "movie") } returns "tt0042"
+
+        val originBase = "https://origin.example"
+        val originMeta = MetaItem(
+            id = "tmdb:42",
+            type = "movie",
+            name = "Origin title",
+            addonBaseUrl = originBase
+        )
+        coEvery {
+            repository.resolvePreferredMetaDetails("movie", "tmdb:42", originBase)
+        } returns originMeta
+        coEvery {
+            repository.getStreams("movie", "tt0042", originBase, "tmdb:42")
+        } returns emptyList()
+        coEvery {
+            subtitleRepository.getSubtitles(
+                "movie", "tt0042", null, null, null, originBase, "tmdb:42"
+            )
+        } returns emptyList()
+
+        val viewModel = newViewModel(tmdbService)
+        viewModel.loadDetails("movie", "tmdb:42", originBase)
+        advanceUntilIdle()
+
+        assertEquals("tt0042", viewModel.state.value.resolvedId)
+        coVerify(exactly = 1) {
+            repository.resolvePreferredMetaDetails("movie", "tmdb:42", originBase)
+        }
+        coVerify(exactly = 1) {
+            repository.getStreams("movie", "tt0042", originBase, "tmdb:42")
         }
     }
 
@@ -128,8 +172,12 @@ class DetailsViewModelTest {
             addonName = "Subs"
         )
 
-        coEvery { repository.getStreams("series", streamRequestId) } returns listOf(stream)
-        coEvery { subtitleRepository.getSubtitles("series", streamRequestId) } returns listOf(generic)
+        coEvery { repository.getStreams("series", streamRequestId, null, null) } returns listOf(stream)
+        coEvery {
+            subtitleRepository.getSubtitles(
+                "series", streamRequestId, null, null, null, null, null
+            )
+        } returns listOf(generic)
         coEvery {
             subtitleRepository.getSubtitlesForStream(
                 type = "series",
@@ -169,7 +217,9 @@ class DetailsViewModelTest {
         assertFalse(viewModel.state.value.isLoadingStreams)
     }
 
-    private fun newViewModel() = DetailsViewModel(
+    private fun newViewModel(
+        tmdbService: TmdbService = mockk<TmdbService>(relaxed = true)
+    ) = DetailsViewModel(
         dao = dao,
         sourceSelectionStore = sourceSelectionStore,
         episodeBrowseStore = mockk<EpisodeBrowseStore>(relaxed = true),
@@ -178,7 +228,7 @@ class DetailsViewModelTest {
         subtitleRepository = subtitleRepository,
         profileConfigurationManager = profileConfigurationManager,
         streamSortingService = StreamSortingService(),
-        tmdbService = mockk<TmdbService>(relaxed = true),
+        tmdbService = tmdbService,
         tmdbMetadataService = mockk<TmdbMetadataService>(relaxed = true),
         traktSyncManager = mockk<TraktSyncManager>(relaxed = true),
         wutchManager = mockk<WutchManager>(relaxed = true),

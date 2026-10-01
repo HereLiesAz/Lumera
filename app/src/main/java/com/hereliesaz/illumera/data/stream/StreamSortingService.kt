@@ -188,10 +188,11 @@ class StreamSortingService @Inject constructor() {
     }
 
     private fun containsAuthoritativeAudioLanguage(text: String, language: String): Boolean {
-        return languageAliases(language)
-            .asSequence()
-            .filter { alias -> alias.length > 2 }
-            .any { alias -> languageMatches(text, alias).any() }
+        // A filename is still free text: movie titles such as "The English Patient"
+        // must not satisfy a forced-English rule. Require an audio cue (audio/dub/dual)
+        // just like title/description matching; structured language fields are handled
+        // separately by languageCodesMatch().
+        return containsAudioLanguage(text, language)
     }
 
     private fun containsAudioLanguage(text: String, language: String): Boolean {

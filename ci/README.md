@@ -1,57 +1,30 @@
-# CI release signing
+# CI and release credentials
 
-`ci-debug.keystore` is a fixed, checked-in keystore used **only** as a fallback
-when no real release keystore is configured — see
-`.github/workflows/release.yml` and the signing block in `app/build.gradle.kts`.
+## Release signing
 
-It exists because Android's package installer rejects an app upgrade whose
-signing certificate doesn't match the currently-installed one, and
-`AppUpdateManager` now checks this explicitly too. Without a fixed keystore,
-every GitHub Actions run would get a different randomly-generated debug
-keystore (Android Studio's implicit `debug` signing config is generated
-per-machine on first use), so consecutive CI releases would silently stop
-being installable as upgrades over each other.
+Release and Play artifacts require the real release/upload keystore. The app
+build deliberately fails `assembleRelease`, `bundleRelease`,
+`assemblePlay`, and `bundlePlay` when the four signing values are absent;
+it never reports success for an unsigned distributable artifact.
 
-Its password is intentionally public (`illumera-ci-debug`, for both the
-keystore and the key) — it provides **no security**, only a consistent
-identity for test/debug releases. **Never use it for a real published
-release** you expect users to trust or keep long-term; if this repo's CI
-starts publishing releases meant for real users, add a real release keystore
-(see below) so those builds stop being debug-signed.
+The checked-in `ci/ci-debug.keystore` is a legacy test identity and is **not**
+a release-signing fallback. Do not publish builds signed with it.
 
-## Switching to a real release keystore
+The centralized release workflow in `HereLiesAz/workflows` supplies the
+release signing material for published builds. For local distributable builds,
+set these in `local.properties` (never commit them):
 
-1. Generate one (keep it somewhere safe — losing it means you can never sign
-   an upgrade to an already-installed release again):
-   ```bash
-   keytool -genkeypair -v -keystore release.keystore -alias illumera-release \
-     -keyalg RSA -keysize 2048 -validity 10000
-   ```
-2. Base64-encode it and add these as **Actions secrets** on the
-   `HereLiesAz/illumera` repo (Settings → Secrets and variables → Actions):
-   - `KEYSTORE_RAW` — output of `base64 -w0 release.keystore`
-   - `KEYSTORE_PASSWORD`
-   - `KEY_ALIAS`
-   - `KEY_PASSWORD`
+- `release.storeFile`
+- `release.storePassword`
+- `release.keyAlias`
+- `release.keyPassword`
 
-   The following are optional certificate metadata (owner DN, SHA-1/SHA-256
-   fingerprints, exported public/private keys and cert chain) some workflows
-   generate alongside a keystore — handy for things like verifying
-   `assetlinks.json` or enrolling in Play App Signing, but not read by this
-   pipeline: `KEYSTORE_OWNER`, `KEYSTORE_SHA1`, `KEYSTORE_SHA256`,
-   `KEYSTORE_PRIVATE`, `KEYSTORE_PUBLIC`, `KEYSTORE_CHAIN`, `KEYSTORE_RSA`.
-3. Once all four required secrets are set, `.github/workflows/release.yml`
-   picks them up automatically on the next push to `main` and stops using
-   `ci-debug.keystore`. Note this is a one-way switch for real users: once
-   they've installed a build signed with the real keystore, they can never
-   go back to a `ci-debug.keystore`-signed build without uninstalling first
-   (Android will refuse the "upgrade" as a signature mismatch).
+The equivalent CI environment variables are `RELEASE_STORE_FILE`,
+`RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and
+`RELEASE_KEY_PASSWORD`.
 
-For a local `./gradlew assembleRelease` signed with the real keystore instead
-of the CI fallback, add the same four values to `local.properties` (not
-committed) as `release.storeFile`, `release.storePassword`,
-`release.keyAlias`, `release.keyPassword` — `release.storeFile` should be a
-path to the keystore file, relative to the repo root or absolute.
+Changing a release signing certificate is not an upgrade path: Android will
+reject a package signed by a different key over an existing installation.
 
 ## Trakt API credentials
 
@@ -104,22 +77,13 @@ ships in the APK and is only a spam filter. `acra.url`/`acra.token` in
 
 ## Automated PR review (Glee)
 
-Two independent workflows run the same adversarial "glee" review (an
-auditor whose job is to find failures, not admire the work) on every
-non-draft pull request, each through a different model:
+PR review is centrally managed by `HereLiesAz/workflows`. Repository webhook
+events are routed through the central gateway, and the canonical Glee behavior
+is the repoless Codex audit that posts one PR audit comment.
 
-- `.github/workflows/glee-review.yml` — Claude, via
-  `anthropics/claude-code-action`. Add this as an **Actions secret**:
-  - `ANTHROPIC_API_KEY` — an Anthropic API key with access to a Claude model
-- `.github/workflows/glee-review-antigravity.yml` — Google's Antigravity
-  SDK, via the community `rsamborski/run-agy-sdk` action (pinned to a
-  commit, not `@main` — see the comment in that workflow for why). Add this
-  as an **Actions secret**:
-  - `ANTIGRAVITY_API_KEY` — a Gemini/Antigravity API key from Google AI Studio
-
-Either workflow's job simply fails at the review step if its secret is
-missing; the other workflow (and the rest of CI) is unaffected.
-
-`.github/copilot-instructions.md` also carries the glee persona for GitHub's
-own built-in Copilot code review — useful if that's ever requested on a PR
-(manually, or via a repo Ruleset), but nothing here auto-requests it.
+The former repository-local `glee-review.yml`,
+`glee-review-antigravity.yml`, and `glee-dual-audit.yml` workflows were
+removed intentionally. They must not be restored, and this repository no
+longer needs `ANTHROPIC_API_KEY` or `ANTIGRAVITY_API_KEY` secrets for PR
+review. Shared reviewer/provider credentials live with the centralized
+automation instead.

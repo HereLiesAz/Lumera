@@ -15,6 +15,7 @@ import com.hereliesaz.illumera.data.repository.AddonCatalogRepository
 import com.hereliesaz.illumera.data.repository.AddonRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -121,6 +122,15 @@ class AddonsViewModel @Inject constructor(
                         catalogError = null
                     )
                 }
+            } catch (_: TimeoutCancellationException) {
+                if (_uiState.value.catalogSource == source &&
+                    (source != AddonCatalogSource.COLLECTION || _uiState.value.activeCollection == collection)
+                ) {
+                    _uiState.value = _uiState.value.copy(
+                        isCatalogLoading = false,
+                        catalogError = "The addon catalog request timed out"
+                    )
+                }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (e: Exception) {
@@ -162,6 +172,11 @@ class AddonsViewModel @Inject constructor(
                     catalogItems = result.addons,
                     isCatalogLoading = false,
                     catalogError = null
+                )
+            } catch (_: TimeoutCancellationException) {
+                _uiState.value = _uiState.value.copy(
+                    isCatalogLoading = false,
+                    catalogError = "The addon collection request timed out"
                 )
             } catch (ce: CancellationException) {
                 throw ce
