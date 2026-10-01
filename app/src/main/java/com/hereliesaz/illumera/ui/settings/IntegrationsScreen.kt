@@ -91,6 +91,10 @@ fun IntegrationsScreen(
     var showDisconnectConfirm by remember { mutableStateOf(false) }
     var showResetSyncConfirm by remember { mutableStateOf(false) }
     var externalLink by remember { mutableStateOf<ExternalLinkOperation?>(null) }
+    var showTmdbSettings by remember { mutableStateOf(false) }
+    var showTraktDialog by remember { mutableStateOf(false) }
+    var showDebridDialog by remember { mutableStateOf(false) }
+    var showWutchDialog by remember { mutableStateOf(false) }
 
     // Handle events
     LaunchedEffect(Unit) {
@@ -155,11 +159,6 @@ fun IntegrationsScreen(
     // Extract connection state for use in dialogs
     val stremioConnected = state.connectionState is StremioConnectionState.Connected
     val stremioEmail = (state.connectionState as? StremioConnectionState.Connected)?.email
-
-    var showTmdbSettings by remember { mutableStateOf(false) }
-    var showTraktDialog by remember { mutableStateOf(false) }
-    var showDebridDialog by remember { mutableStateOf(false) }
-    var showWutchDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
