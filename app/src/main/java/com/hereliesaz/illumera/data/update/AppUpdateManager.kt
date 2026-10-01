@@ -59,9 +59,10 @@ class AppUpdateManager @Inject constructor(
     val state = _state.asStateFlow()
 
     val isPopupEnabled: Boolean
-        get() = prefs.getBoolean(KEY_UPDATE_POPUP_ENABLED, true)
+        get() = BuildConfig.ENABLE_SELF_UPDATE && prefs.getBoolean(KEY_UPDATE_POPUP_ENABLED, true)
 
     fun setPopupEnabled(enabled: Boolean) {
+        if (!BuildConfig.ENABLE_SELF_UPDATE) return
         prefs.edit().putBoolean(KEY_UPDATE_POPUP_ENABLED, enabled).apply()
     }
 
@@ -72,6 +73,10 @@ class AppUpdateManager @Inject constructor(
     private var lastReleaseBody: String? = null
 
     suspend fun checkForUpdate() {
+        if (!BuildConfig.ENABLE_SELF_UPDATE) {
+            _state.value = UpdateState.Idle
+            return
+        }
         _state.value = UpdateState.Checking
         try {
             val release = withContext(Dispatchers.IO) { fetchLatestRelease() }
@@ -108,6 +113,7 @@ class AppUpdateManager @Inject constructor(
     }
 
     suspend fun downloadAndInstall(apkUrl: String) {
+        if (!BuildConfig.ENABLE_SELF_UPDATE) return
         // Re-entrancy guard: a rapid double-press on the "Download & Install" row (or the
         // auto-popup and Settings both triggering it) would otherwise start two concurrent
         // downloads truncating and writing the same cache file, corrupting it mid-transfer.
@@ -147,6 +153,7 @@ class AppUpdateManager @Inject constructor(
 
     /** Re-launch the installer for an APK that already finished downloading and verifying. */
     fun retryInstall() {
+        if (!BuildConfig.ENABLE_SELF_UPDATE) return
         val file = (_state.value as? UpdateState.ReadyToInstall)?.file ?: return
         if (!file.exists()) {
             _state.value = UpdateState.Error("Downloaded update is no longer available. Please check for updates again.")

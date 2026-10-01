@@ -385,54 +385,79 @@ class IntegrationsViewModel @Inject constructor(
      * Uses the stored authKey - does not require password.
      */
     fun syncAddons() {
+        val initiatingProfileId = profileConfigurationManager.getLastActiveProfileId() ?: return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
+            _uiState.value = _uiState.value.copy(isLoading = true, pendingAddons = null)
+            try {
+                profileConfigurationManager.withActiveProfileRuntime(initiatingProfileId) {
+                    val entries = stremioAuthManager.fetchAddons().getOrElse { throw it }
+                    val remoteUrls = entries
+                        .map { normalizeTransportUrl(it.transportUrl) }
+                        .filter { it.isNotBlank() }
+                        .distinct()
 
-            val result = stremioAuthManager.fetchAddons()
+                    val current = addonRepository.getAddons().first()
+                    val currentByUrl = current.associateBy { normalizeTransportUrl(it.transportUrl) }
 
-            result.fold(
-                onSuccess = { entries ->
-                    // Get currently installed addon URLs
-                    val installedUrls = addonRepository.getAddons()
-                        .firstOrNull()
-                        ?.map { it.transportUrl }
-                        ?.toSet()
-                        ?: emptySet()
+                    for (transportUrl in remoteUrls) {
+                        if (currentByUrl.containsKey(transportUrl)) continue
+                        try {
+                            addonRepository.installAddon("$transportUrl/manifest.json")
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (e: Exception) {
+                            com.hereliesaz.illumera.crash.AppErrors.w("Integrations", "Could not import Stremio addon $transportUrl", e)
+                        }
+                    }
 
-                    // Convert to StremioAddonItem with duplicate detection
-                    val addonItems = entries.mapNotNull { entry ->
-                        val manifest = entry.manifest ?: return@mapNotNull null
-                        val transportUrl = entry.transportUrl.removeSuffix("/manifest.json").trimEnd('/')
-                        val isInstalled = installedUrls.contains(transportUrl)
+                    val remoteSet = remoteUrls.toSet()
+                    current.forEach { addon ->
+                        val localUrl = normalizeTransportUrl(addon.transportUrl)
+                        if (localUrl != CINEMETA_TRANSPORT_URL && localUrl !in remoteSet) {
+                            try {
+                                addonRepository.deleteAddon(addon.transportUrl)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (e: Exception) {
+                                com.hereliesaz.illumera.crash.AppErrors.w("Integrations", "Could not remove local addon absent from Stremio: $localUrl", e)
+                            }
+                        }
+                    }
 
-                        StremioAddonItem(
-                            name = manifest.name ?: "Unknown Addon",
-                            transportUrl = transportUrl,
-                            description = manifest.description,
-                            isSelected = !isInstalled,
-                            isAlreadyInstalled = isInstalled
+                    var refreshed = addonRepository.getAddons().first()
+                    if (refreshed.none { normalizeTransportUrl(it.transportUrl) == CINEMETA_TRANSPORT_URL }) {
+                        runCatching { addonRepository.installAddon("$CINEMETA_TRANSPORT_URL/manifest.json") }
+                        refreshed = addonRepository.getAddons().first()
+                    }
+
+                    val remoteOrder = remoteUrls.withIndex().associate { (index, url) -> url to index }
+                    val ordered = refreshed
+                        .sortedWith(
+                            compareBy(
+                                { remoteOrder[normalizeTransportUrl(it.transportUrl)] ?: Int.MAX_VALUE },
+                                { if (normalizeTransportUrl(it.transportUrl) == CINEMETA_TRANSPORT_URL) 0 else 1 },
+                                { it.name.lowercase() }
+                            )
                         )
-                    }
+                        .mapIndexed { index, addon -> addon.copy(sortOrder = index) }
 
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        pendingAddons = addonItems.ifEmpty { null }
-                    )
-
-                    if (addonItems.isEmpty()) {
-                        _events.send(IntegrationsEvent.SyncComplete(0))
-                    }
-                },
-                onFailure = { error ->
-                    _uiState.value = _uiState.value.copy(isLoading = false)
-                    val message = when (error) {
-                        is StremioAuthError.InvalidCredentials -> "Session expired. Please reconnect."
-                        is StremioAuthError.NetworkError -> "Network error: ${error.message}"
-                        else -> error.message ?: "Unknown error"
-                    }
-                    _events.send(IntegrationsEvent.LoginError(message))
+                    addonRepository.updateAddons(ordered)
+                    profileConfigurationManager.saveRuntimeStateWithinActiveRuntime(initiatingProfileId)
+                    profileConfigurationManager.resetStartupCapture()
+                    _events.send(IntegrationsEvent.SyncComplete(remoteUrls.size))
                 }
-            )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val message = when (error) {
+                    is StremioAuthError.InvalidCredentials -> "Session expired. Please reconnect."
+                    is StremioAuthError.NetworkError -> "Network error: ${error.message}"
+                    else -> error.message ?: "Could not import Stremio addons."
+                }
+                _events.send(IntegrationsEvent.LoginError(message))
+            } finally {
+                _uiState.value = _uiState.value.copy(isLoading = false, pendingAddons = null)
+            }
         }
     }
 

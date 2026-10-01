@@ -76,6 +76,7 @@ import com.hereliesaz.illumera.remote_input.ServerInfo
 import com.hereliesaz.illumera.ui.util.generateQrCodeBitmap
 import com.hereliesaz.illumera.ui.util.rememberDialogWidth
 import com.hereliesaz.illumera.ui.util.rememberIsTvDevice
+import com.hereliesaz.illumera.ui.theme.DefaultThemes
 import com.hereliesaz.illumera.ui.theme.LumeraTheme
 import com.hereliesaz.illumera.ui.theme.ThemeManager
 import kotlinx.coroutines.delay
@@ -1324,8 +1325,8 @@ fun WizardThemeStep(onFinish: (String) -> Unit, onBack: () -> Unit) {
     // the user created via the theme editor is unreachable from this wizard.
     val themes by themeManager.availableThemes.collectAsState()
     if (themes.isEmpty()) return
-    val initialIndex = themes.size / 2
-    var previewTheme by remember { mutableStateOf(themes[initialIndex]) }
+    val initialIndex = themes.indexOfFirst { it.id == DefaultThemes.ILLUMERA.id }.takeIf { it >= 0 } ?: 0
+    var previewTheme by remember(themes, initialIndex) { mutableStateOf(themes[initialIndex]) }
     val listState = rememberLazyListState()
     val horizontalRepeatGate = remember {
         DpadRepeatGate(horizontalRepeatIntervalMs = PROFILE_HORIZONTAL_REPEAT_INTERVAL_MS)

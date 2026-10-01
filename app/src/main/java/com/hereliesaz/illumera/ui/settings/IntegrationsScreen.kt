@@ -118,6 +118,7 @@ fun IntegrationsScreen(
                     ).show()
                 }
                 is IntegrationsEvent.DebridConnected -> {
+                    showDebridDialog = false
                     Toast.makeText(context, "Connected to ${event.provider.displayName}", Toast.LENGTH_SHORT).show()
                 }
                 is IntegrationsEvent.DebridError -> {
@@ -127,6 +128,7 @@ fun IntegrationsScreen(
                     externalLink = ExternalLinkOperation(event.title, event.url)
                 }
                 is IntegrationsEvent.WutchConnected -> {
+                    showWutchDialog = false
                     Toast.makeText(context, "Connected to wutch.tv as ${event.username}", Toast.LENGTH_SHORT).show()
                 }
                 is IntegrationsEvent.WutchError -> {
@@ -411,7 +413,8 @@ fun IntegrationsScreen(
             onConnect = { email, password, apiKey -> viewModel.connectWutch(email, password, apiKey) },
             onSync = { viewModel.syncWutch() },
             onDisconnect = { viewModel.disconnectWutch() },
-            onDismiss = { showWutchDialog = false }
+            onDismiss = { showWutchDialog = false },
+            deviceFormFactor = deviceFormFactor
         )
     }
 }
@@ -1911,7 +1914,22 @@ private fun IntegrationTextField(
     focusRequester: FocusRequester? = null,
     onDone: (() -> Unit)? = null
 ) {
-    var isFocused by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val isTv = remember(context) { detectDeviceFormFactor(context) == DeviceFormFactor.TV }
+    val shellInteractionSource = remember { MutableInteractionSource() }
+    val shellFocused by shellInteractionSource.collectIsFocusedAsState()
+    val shellFocusRequester = remember { FocusRequester() }
+    val inputFocusRequester = remember { FocusRequester() }
+    var inputFocused by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    val isFocused = shellFocused || inputFocused
+
+    LaunchedEffect(editing) {
+        if (isTv && editing) {
+            delay(50)
+            runCatching { inputFocusRequester.requestFocus() }
+        }
+    }
 
     val borderBrush = if (isFocused) {
         Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary))
@@ -1923,19 +1941,32 @@ private fun IntegrationTextField(
         modifier = modifier
             .fillMaxWidth()
             .height(50.dp)
+            .then(if (isTv && focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .then(if (isTv) Modifier.focusRequester(shellFocusRequester) else Modifier)
             .clip(RoundedCornerShape(8.dp))
             .background(Color.Black.copy(0.5f))
             .border(if (isFocused) 2.dp else 1.dp, borderBrush, RoundedCornerShape(8.dp))
+            .then(
+                if (isTv) {
+                    Modifier
+                        .clickable(interactionSource = shellInteractionSource, indication = null) { editing = true }
+                        .focusable(interactionSource = shellInteractionSource)
+                } else Modifier
+            )
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         if (value.isEmpty()) {
-            Text(placeholder, color = Color.Gray)
+            Text(
+                if (isTv && shellFocused && !editing) "$placeholder · press OK to type" else placeholder,
+                color = Color.Gray
+            )
         }
 
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
+            enabled = !isTv || editing,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             singleLine = true,
@@ -1945,12 +1976,22 @@ private fun IntegrationTextField(
                 imeAction = if (onDone != null) ImeAction.Done else ImeAction.Next
             ),
             keyboardActions = KeyboardActions(
-                onDone = { onDone?.invoke() }
+                onDone = {
+                    if (isTv) {
+                        editing = false
+                        runCatching { shellFocusRequester.requestFocus() }
+                    }
+                    onDone?.invoke()
+                }
             ),
             modifier = Modifier
                 .fillMaxWidth()
-                .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-                .onFocusChanged { isFocused = it.isFocused }
+                .focusRequester(inputFocusRequester)
+                .then(if (!isTv && focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .onFocusChanged {
+                    inputFocused = it.isFocused
+                    if (isTv && !it.isFocused) editing = false
+                }
         )
     }
 }
@@ -2015,12 +2056,16 @@ private fun WutchDialog(
     onConnect: (email: String, password: String, apiKey: String?) -> Unit,
     onSync: () -> Unit,
     onDisconnect: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    deviceFormFactor: DeviceFormFactor
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
-    var useKey by remember { mutableStateOf(false) }
+    var useKey by remember(deviceFormFactor) { mutableStateOf(deviceFormFactor == DeviceFormFactor.TV) }
+    var remoteServerInfo by remember { mutableStateOf<ServerInfo?>(null) }
+    var remoteQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var remoteError by remember { mutableStateOf<String?>(null) }
     val focusRequester = remember { FocusRequester() }
     val accentColor = MaterialTheme.colorScheme.primary
     val context = LocalContext.current
@@ -2028,10 +2073,39 @@ private fun WutchDialog(
     val maxDialogHeight = (LocalConfiguration.current.screenHeightDp * 0.9f).dp
     val canConnect = !isBusy && if (useKey) apiKey.isNotBlank() else email.isNotBlank() && password.isNotBlank()
     val connect = { if (canConnect) onConnect(email, password, apiKey.takeIf { useKey }) }
+    val remoteTextServer = remember { com.hereliesaz.illumera.remote_input.RemoteTextServerManager() }
 
-    LaunchedEffect(username, useKey) {
+    LaunchedEffect(username, useKey, deviceFormFactor) {
         delay(150)
         runCatching { focusRequester.requestFocus() }
+        remoteTextServer.stopServer()
+        remoteServerInfo = null
+        remoteQrBitmap = null
+        remoteError = null
+        if (username == null && useKey && deviceFormFactor == DeviceFormFactor.TV) {
+            val info = remoteTextServer.startServer(
+                title = "Connect wutch.tv",
+                prompt = "Open wutch.tv if needed, then paste your API key here. Illumera will connect automatically.",
+                fieldLabel = "wutch.tv API key",
+                helperUrl = "https://wutch.tv",
+                helperLabel = "Open wutch.tv",
+                secret = true
+            ) { received ->
+                val cleanKey = received.trim()
+                apiKey = cleanKey
+                if (cleanKey.isNotBlank()) onConnect("", "", cleanKey)
+            }
+            if (info != null) {
+                remoteServerInfo = info
+                remoteQrBitmap = generateQrCodeBitmap(info.url)
+            } else {
+                remoteError = "Could not start phone input. Check that the TV is connected to your network."
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { remoteTextServer.stopServer() }
     }
 
     Dialog(
@@ -2085,12 +2159,48 @@ private fun WutchDialog(
                     } else {
                         if (useKey) {
                             Text("API key", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), color = Color.White.copy(0.8f))
-                            Text(
-                                "Make one on wutch.tv under Settings → Integrations.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray,
-                                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
-                            )
+                            if (deviceFormFactor == DeviceFormFactor.TV) {
+                                Text(
+                                    "Scan with your phone. The page can open wutch.tv, then sends the pasted key straight back to this TV.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray,
+                                    modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
+                                )
+                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    when {
+                                        remoteQrBitmap != null && remoteServerInfo != null -> Box(
+                                            modifier = Modifier.size(180.dp).clip(RoundedCornerShape(4.dp)).background(Color.White).padding(8.dp)
+                                        ) {
+                                            Image(
+                                                bitmap = remoteQrBitmap!!.asImageBitmap(),
+                                                contentDescription = "wutch.tv API-key transfer QR code",
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
+                                        remoteError != null -> Text(
+                                            remoteError!!,
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        else -> CircularProgressIndicator(modifier = Modifier.size(40.dp), color = accentColor, strokeWidth = 3.dp)
+                                    }
+                                }
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    "Remote input is the default. Select the field below only if you want to type with the TV keyboard.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            } else {
+                                Text(
+                                    "Make one on wutch.tv under Settings → Integrations.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Gray,
+                                    modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                                )
+                            }
                             IntegrationTextField(
                                 value = apiKey,
                                 onValueChange = { apiKey = it },
@@ -2172,12 +2282,47 @@ private fun DebridDialog(
     val context = LocalContext.current
     val debridScrollState = rememberScrollState()
     val maxDialogHeight = (LocalConfiguration.current.screenHeightDp * 0.9f).dp
+    var remoteServerInfo by remember { mutableStateOf<ServerInfo?>(null) }
+    var remoteQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var remoteError by remember { mutableStateOf<String?>(null) }
+    val remoteTextServer = remember { com.hereliesaz.illumera.remote_input.RemoteTextServerManager() }
 
     LaunchedEffect(Unit) {
         delay(150)
         runCatching { focusRequester.requestFocus() }
     }
 
+    LaunchedEffect(deviceFormFactor, selectedProvider, connectedProvider) {
+        remoteTextServer.stopServer()
+        remoteServerInfo = null
+        remoteQrBitmap = null
+        remoteError = null
+        if (deviceFormFactor == DeviceFormFactor.TV && connectedProvider == null) {
+            val providerAtStart = selectedProvider
+            val info = remoteTextServer.startServer(
+                title = "Connect ${providerAtStart.displayName}",
+                prompt = "Open the provider page if needed, copy your API key, then paste it here. Illumera will connect automatically.",
+                fieldLabel = "${providerAtStart.displayName} API key",
+                helperUrl = providerAtStart.apiKeyUrl,
+                helperLabel = "Open ${providerAtStart.displayName} API-key page",
+                secret = true
+            ) { received ->
+                val cleanKey = received.trim()
+                apiKey = cleanKey
+                if (cleanKey.isNotBlank()) onConnect(providerAtStart, cleanKey)
+            }
+            if (info != null) {
+                remoteServerInfo = info
+                remoteQrBitmap = generateQrCodeBitmap(info.url)
+            } else {
+                remoteError = "Could not start phone input. Check that the TV is connected to your network."
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { remoteTextServer.stopServer() }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -2265,28 +2410,41 @@ private fun DebridDialog(
                         Spacer(Modifier.height(16.dp))
 
                         if (deviceFormFactor == DeviceFormFactor.TV) {
-                            Text("Get your API key on your phone", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), color = Color.White.copy(0.8f))
+                            Text("Send the API key from your phone", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), color = Color.White.copy(0.8f))
                             Text(
-                                "Scan the QR code to open ${selectedProvider.displayName}'s HTTPS API-key page. For security, Illumera never sends the raw key over the local network; enter the key on the TV after retrieving it.",
+                                "Scan this QR code. The phone page can open ${selectedProvider.displayName}'s API-key page, then sends the pasted key directly back to this TV and connects automatically.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.Gray,
                                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                             )
-                            val providerQr by produceState<Bitmap?>(initialValue = null, selectedProvider) {
-                                value = generateQrCodeBitmap(selectedProvider.apiKeyUrl, 260)
-                            }
                             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                if (providerQr != null) {
-                                    Box(modifier = Modifier.size(180.dp).clip(RoundedCornerShape(4.dp)).background(Color.White).padding(8.dp)) {
-                                        Image(bitmap = providerQr!!.asImageBitmap(), contentDescription = "${selectedProvider.displayName} API key QR code", modifier = Modifier.fillMaxSize())
+                                when {
+                                    remoteQrBitmap != null && remoteServerInfo != null -> Box(
+                                        modifier = Modifier.size(180.dp).clip(RoundedCornerShape(4.dp)).background(Color.White).padding(8.dp)
+                                    ) {
+                                        Image(
+                                            bitmap = remoteQrBitmap!!.asImageBitmap(),
+                                            contentDescription = "${selectedProvider.displayName} API-key transfer QR code",
+                                            modifier = Modifier.fillMaxSize()
+                                        )
                                     }
-                                } else {
-                                    CircularProgressIndicator(modifier = Modifier.size(40.dp), color = accentColor, strokeWidth = 3.dp)
+                                    remoteError != null -> Text(
+                                        remoteError!!,
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    else -> CircularProgressIndicator(modifier = Modifier.size(40.dp), color = accentColor, strokeWidth = 3.dp)
                                 }
                             }
                             Spacer(Modifier.height(16.dp))
-                            Text("API Key", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), color = Color.White.copy(0.8f))
-                            Spacer(Modifier.height(8.dp))
+                            Text("TV keyboard fallback", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), color = Color.White.copy(0.8f))
+                            Text(
+                                "The keyboard stays closed until you select this field and press OK.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                            )
                             IntegrationTextField(
                                 value = apiKey,
                                 onValueChange = { apiKey = it },

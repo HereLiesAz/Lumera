@@ -48,6 +48,8 @@ import androidx.compose.ui.window.Dialog
 import com.hereliesaz.illumera.ui.components.ButtonEmphasis
 import com.hereliesaz.illumera.ui.components.buttonColors
 import com.hereliesaz.illumera.ui.util.rememberDialogWidth
+import com.hereliesaz.illumera.ui.util.rememberIsTvDevice
+import androidx.compose.runtime.LaunchedEffect
 
 @Composable
 fun VoidInput(
@@ -57,7 +59,21 @@ fun VoidInput(
     modifier: Modifier = Modifier,
     onDone: (() -> Unit)? = null
 ) {
-    var isFocused by remember { mutableStateOf(false) }
+    val isTv = rememberIsTvDevice()
+    val shellInteractionSource = remember { MutableInteractionSource() }
+    val shellFocused by shellInteractionSource.collectIsFocusedAsState()
+    val shellFocusRequester = remember { FocusRequester() }
+    val inputFocusRequester = remember { FocusRequester() }
+    var inputFocused by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    val isFocused = shellFocused || inputFocused
+
+    LaunchedEffect(editing) {
+        if (isTv && editing) {
+            kotlinx.coroutines.delay(50)
+            runCatching { inputFocusRequester.requestFocus() }
+        }
+    }
 
     val borderBrush = if (isFocused) {
         Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary))
@@ -68,17 +84,31 @@ fun VoidInput(
     Box(
         modifier = modifier
             .height(50.dp)
+            .then(if (isTv) Modifier.focusRequester(shellFocusRequester) else Modifier)
             .clip(RoundedCornerShape(8.dp))
             .background(Color.Black.copy(alpha = 0.5f))
             .border(if (isFocused) 2.dp else 1.dp, borderBrush, RoundedCornerShape(8.dp))
+            .then(
+                if (isTv) {
+                    Modifier
+                        .clickable(interactionSource = shellInteractionSource, indication = null) { editing = true }
+                        .focusable(interactionSource = shellInteractionSource)
+                } else Modifier
+            )
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.CenterStart
     ) {
-        if (value.isEmpty()) Text(placeholder, color = Color.Gray)
+        if (value.isEmpty()) {
+            Text(
+                if (isTv && shellFocused && !editing) "$placeholder · press OK to type" else placeholder,
+                color = Color.Gray
+            )
+        }
 
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
+            enabled = !isTv || editing,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             singleLine = true,
@@ -86,10 +116,22 @@ fun VoidInput(
                 capitalization = KeyboardCapitalization.Sentences,
                 imeAction = ImeAction.Done
             ),
-            keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    if (isTv) {
+                        editing = false
+                        runCatching { shellFocusRequester.requestFocus() }
+                    }
+                    onDone?.invoke()
+                }
+            ),
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { isFocused = it.isFocused }
+                .focusRequester(inputFocusRequester)
+                .onFocusChanged {
+                    inputFocused = it.isFocused
+                    if (isTv && !it.isFocused) editing = false
+                }
         )
     }
 }

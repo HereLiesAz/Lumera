@@ -2186,6 +2186,31 @@ fun AboutSettings(
 
         Spacer(Modifier.height(12.dp))
 
+        if (!BuildConfig.ENABLE_SELF_UPDATE) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White.copy(0.05f))
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "Updates",
+                    color = Color.White.copy(0.8f),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                )
+                Text(
+                    "Managed by Google Play",
+                    color = accentColor,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                )
+            }
+            return@Column
+        }
+
         // UPDATE POPUP TOGGLE
         var popupEnabled by remember { mutableStateOf(updateManager.isPopupEnabled) }
         SettingToggleRow(

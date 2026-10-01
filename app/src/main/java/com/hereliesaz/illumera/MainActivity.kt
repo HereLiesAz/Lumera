@@ -670,7 +670,9 @@ class MainActivity : ComponentActivity() {
             val updateState by appUpdateManager.state.collectAsState()
             var updateDismissed by rememberSaveable { mutableStateOf(false) }
             val updateScope = rememberCoroutineScope()
-            LaunchedEffect(Unit) { appUpdateManager.checkForUpdate() }
+            LaunchedEffect(Unit) {
+            if (BuildConfig.ENABLE_SELF_UPDATE) appUpdateManager.checkForUpdate()
+        }
 
             LumeraTheme(theme = currentTheme) {
                 CompositionLocalProvider(
@@ -1247,7 +1249,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     // Update dialogs (auto-shown after splash)
-                    if (_splashFinished.value && !updateDismissed && appUpdateManager.isPopupEnabled) {
+                    if (BuildConfig.ENABLE_SELF_UPDATE && _splashFinished.value && !updateDismissed && appUpdateManager.isPopupEnabled) {
                         when (val state = updateState) {
                             is UpdateState.UpdateAvailable -> {
                                 UpdateAvailableDialog(
