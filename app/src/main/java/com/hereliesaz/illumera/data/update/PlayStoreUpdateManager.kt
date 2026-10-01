@@ -7,7 +7,7 @@ import android.net.Uri
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.IntentSenderRequest
 import com.google.android.play.core.appupdate.AppUpdateInfo
-import com.google.android.play.core.appupdate.AppUpdateManager
+import com.google.android.play.core.appupdate.AppUpdateManager as GooglePlayAppUpdateManager
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
 import com.google.android.play.core.appupdate.AppUpdateOptions
 import com.google.android.play.core.install.model.AppUpdateType
@@ -38,7 +38,7 @@ sealed class PlayStoreUpdateState {
 class PlayStoreUpdateManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private val manager: AppUpdateManager by lazy { AppUpdateManagerFactory.create(context) }
+    private val manager: GooglePlayAppUpdateManager by lazy { AppUpdateManagerFactory.create(context) }
     private val _state = MutableStateFlow<PlayStoreUpdateState>(PlayStoreUpdateState.Idle)
     val state = _state.asStateFlow()
 
