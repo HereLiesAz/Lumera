@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalContext
 import com.hereliesaz.illumera.crash.CrashReporting
 import com.hereliesaz.illumera.ui.addons.VoidDialog
+import com.hereliesaz.illumera.ui.addons.VoidInput
 import com.hereliesaz.illumera.ui.components.ButtonEmphasis
 import com.hereliesaz.illumera.ui.components.buttonColors
 import com.hereliesaz.illumera.ui.details.FilterDropdown
@@ -2079,31 +2080,16 @@ fun SourcePreferencesSettings(
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    BasicTextField(
+                    VoidInput(
                         value = dialogInput,
                         onValueChange = { dialogInput = it },
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontSize = 14.sp),
-                        cursorBrush = SolidColor(Color.White),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                viewModel.updateSourceExcludePhrases(currentProfile.id, dialogInput)
-                                showExcludeDialog = false
-                            }
-                        ),
+                        placeholder = "e.g. sample, remux, cam",
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color.White.copy(0.08f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 12.dp, vertical = 12.dp)
                             .focusRequester(focusRequester),
-                        decorationBox = { innerTextField ->
-                            Box {
-                                if (dialogInput.isEmpty()) {
-                                    Text("e.g. sample, remux, cam", color = Color.White.copy(0.3f), fontSize = 14.sp)
-                                }
-                                innerTextField()
-                            }
+                        onDone = {
+                            viewModel.updateSourceExcludePhrases(currentProfile.id, dialogInput)
+                            showExcludeDialog = false
                         }
                     )
 

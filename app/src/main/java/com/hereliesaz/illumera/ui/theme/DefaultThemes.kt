@@ -128,7 +128,7 @@ object DefaultThemes {
     /**
      * All built-in themes in display order.
      */
-    val ALL = listOf(VOID, ILLUMERA, NEON, OCEAN, SUNSET, EMERALD, AMBER, CRIMSON, SLATE)
+    val ALL = listOf(ILLUMERA, VOID, NEON, OCEAN, SUNSET, EMERALD, AMBER, CRIMSON, SLATE)
 
     /**
      * Get a built-in theme by ID, returns ILLUMERA (the app default) as fallback.

@@ -269,20 +269,29 @@ fun EpisodesContent(
     onDismiss: () -> Unit
 ) {
     val seasons = remember(videos) { episodesBySeason(videos) }
-    var selectedSeason by remember(savedSeason) { mutableIntStateOf(savedSeason ?: seasons.keys.minOrNull() ?: 1) }
+    var selectedSeason by remember(savedSeason) {
+        mutableIntStateOf(savedSeason ?: seasons.keys.minOrNull() ?: 1)
+    }
     val episodes = seasons[selectedSeason] ?: emptyList()
 
-    val tabRequester = remember { FocusRequester() }
-    val scope = rememberCoroutineScope() // Needed for manual scrolling
-    val repeatGate = remember { DpadRepeatGate(horizontalRepeatIntervalMs = 150L, verticalRepeatIntervalMs = 200L) }
+    val seasonListState = rememberLazyListState()
+    val seasonRailRequester = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    val repeatGate = remember {
+        DpadRepeatGate(verticalRepeatIntervalMs = 200L)
+    }
 
-    LaunchedEffect(selectedSeason) { onSeasonChange(selectedSeason) }
+    LaunchedEffect(selectedSeason) {
+        onSeasonChange(selectedSeason)
+        val seasonIndex = seasons.keys.indexOf(selectedSeason)
+        if (seasonIndex >= 0) {
+            val visible = seasonListState.layoutInfo.visibleItemsInfo.any { it.index == seasonIndex }
+            if (!visible) runCatching { seasonListState.scrollToItem(seasonIndex) }
+        }
+    }
 
-    // PRIMARY TARGET: leaving the season tabs (SELECT on a tab, or DOWN from the tab row)
-    // must land on an episode itself — never on its queue / watched buttons, which are only
-    // reachable by moving RIGHT from the episode. The target is the episode last focused in
-    // that season (the sidebar's own entry focus records the episode it opened on), else the
-    // season's first unwatched episode.
+    // Primary target when entering the episode list: the last episode browsed in this
+    // season, otherwise the first unwatched episode.
     val lastFocusedEpisodeBySeason = remember(videos) { mutableStateMapOf<Int, Int>() }
     fun primaryEpisodeIndex(season: Int): Int {
         val eps = seasons[season].orEmpty()
@@ -293,28 +302,29 @@ fun EpisodesContent(
         }
         return if (firstUnwatched >= 0) firstUnwatched else 0
     }
+
     val primaryEpisodeRequester = remember { FocusRequester() }
     val primaryIndex = primaryEpisodeIndex(selectedSeason)
+
     fun focusPrimaryEpisode(season: Int) {
         scope.launch {
-            withFrameNanos { } // let a newly selected season's episodes compose first
+            withFrameNanos { }
             val target = primaryEpisodeIndex(season)
             val visible = listState.layoutInfo.visibleItemsInfo.any { it.index == target }
             if (!visible) {
                 runCatching { listState.scrollToItem(target) }
-                withFrameNanos { } // ...and the target episode (with its requester)
+                withFrameNanos { }
             }
             runCatching { primaryEpisodeRequester.requestFocus() }
         }
     }
 
-    // Set while a season tab drives the change: focusPrimaryEpisode owns the scroll then.
-    var seasonChangedByTab by remember { mutableStateOf(false) }
+    // Set while the season rail drives the change; focusPrimaryEpisode owns the scroll.
+    var seasonChangedByRail by remember { mutableStateOf(false) }
 
-    // Scroll to the saved episode when the sidebar opens (or back to top when savedIndex is 0)
     LaunchedEffect(savedIndex, selectedSeason) {
-        if (seasonChangedByTab) {
-            seasonChangedByTab = false
+        if (seasonChangedByRail) {
+            seasonChangedByRail = false
             return@LaunchedEffect
         }
         if (episodes.isNotEmpty() && savedIndex in episodes.indices) {
@@ -323,90 +333,117 @@ fun EpisodesContent(
     }
 
     Column {
-        Text("More Episodes", style = MaterialTheme.typography.headlineSmall, color = Color.White, modifier = Modifier.padding(bottom = 16.dp))
+        Text(
+            "More Episodes",
+            style = MaterialTheme.typography.headlineSmall,
+            color = Color.White,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
 
-        if (seasons.isNotEmpty()) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
-                itemsIndexed(seasons.keys.toList()) { idx, num ->
-                    SeasonTab(
-                        number = num,
-                        isSelected = num == selectedSeason,
-                        modifier = Modifier
-                            .then(if (idx == 0) Modifier.onPreviewKeyEvent {
-                                if (repeatGate.shouldConsume(it)) return@onPreviewKeyEvent true
-                                it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown
-                            } else Modifier.onPreviewKeyEvent { repeatGate.shouldConsume(it) })
-                            .then(if (num == selectedSeason) Modifier.focusRequester(tabRequester) else Modifier)
-                            .onPreviewKeyEvent {
-                                // DOWN from the tab row goes to the season's primary episode,
-                                // not whatever control happens to sit nearest below the tab.
-                                if (it.key == Key.DirectionDown && it.type == KeyEventType.KeyDown) {
-                                    if (episodes.isNotEmpty()) focusPrimaryEpisode(selectedSeason)
-                                    true
-                                } else false
+        Row(Modifier.fillMaxSize()) {
+            if (seasons.isNotEmpty()) {
+                // Same interaction model as the Sources sidebar: a thin left rail selects
+                // the group, while the full-width list on the right contains the items.
+                LazyColumn(
+                    state = seasonListState,
+                    modifier = Modifier
+                        .width(48.dp)
+                        .fillMaxHeight()
+                        .focusProperties { up = FocusRequester.Cancel }
+                        .dpadNavigation(
+                            onBack = onDismiss,
+                            trapLeft = true,
+                            repeatGate = repeatGate
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(seasons.keys.toList(), key = { it }) { num ->
+                        SourceColumnItem(
+                            name = "Season $num",
+                            isSelected = num == selectedSeason,
+                            modifier = Modifier
+                                .then(
+                                    if (num == selectedSeason) {
+                                        Modifier.focusRequester(seasonRailRequester)
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .focusProperties { right = primaryEpisodeRequester },
+                            onClick = {
+                                if (num != selectedSeason) seasonChangedByRail = true
+                                selectedSeason = num
+                                focusPrimaryEpisode(num)
                             }
-                            .focusProperties { up = FocusRequester.Cancel },
-                        onClick = {
-                            if (num != selectedSeason) seasonChangedByTab = true
-                            selectedSeason = num
-                            // SELECT on a season tab moves into that season's episodes.
-                            focusPrimaryEpisode(num)
-                        }
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-
-        LazyColumn(
-            state = listState, // Using the hoisted state
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.dpadNavigation(
-                onBack = {
-                    // Back-key hierarchy: browsing episodes goes up to the season tabs
-                    // first (if there are any); a second back from there (the tabs row
-                    // has no back interception of its own) falls through to onDismiss.
-                    if (seasons.isNotEmpty()) {
-                        runCatching { tabRequester.requestFocus() }
-                    } else {
-                        onDismiss()
+                        )
                     }
-                },
-                trapLeft = false,
-                repeatGate = repeatGate
-            )
-        ) {
-            if (episodes.isEmpty()) item { Text("No episodes found.", color = Color.Gray) }
-            else {
-                itemsIndexed(episodes, key = { _, ep -> "${ep.season}:${ep.episode}:${ep.id}" }) { index, ep ->
-                    // Focus Logic: Attach requester to saved index; Attach 'Up' navigation to first index
-                    val isTarget = index == (if (savedIndex in episodes.indices) savedIndex else 0)
-                    val mod = Modifier
-                        .then(if (isTarget) Modifier.focusRequester(focusRequester) else Modifier)
-                        .then(if (index == primaryIndex) Modifier.focusRequester(primaryEpisodeRequester) else Modifier)
-                        .onFocusChanged { if (it.isFocused) lastFocusedEpisodeBySeason[selectedSeason] = index }
-                        .then(if (index == 0) Modifier.focusProperties { up = if (seasons.isNotEmpty()) tabRequester else FocusRequester.Cancel } else Modifier)
+                }
 
-                    val isCurrentEpisode = currentEpisodeId != null && (
-                        ep.id == currentEpisodeId ||
-                        currentEpisodeId.endsWith(":${ep.season}:${ep.episode}")
+                Spacer(Modifier.width(16.dp))
+            }
+
+            LazyColumn(
+                state = listState,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .dpadNavigation(
+                        onBack = {
+                            if (seasons.isNotEmpty()) {
+                                runCatching { seasonRailRequester.requestFocus() }
+                            } else {
+                                onDismiss()
+                            }
+                        },
+                        trapLeft = false,
+                        repeatGate = repeatGate
                     )
-                    val epKey = "S${ep.season}:E${ep.episode}"
-                    val epProgress = episodeProgressMap[epKey]
-                    val epEnrichment = episodeEnrichmentMap[epKey]
-                    EpisodeItem(
-                        episode = ep,
-                        isPlaying = isCurrentEpisode,
-                        progress = epProgress?.progress,
-                        isWatched = epProgress?.watched ?: false,
-                        enrichment = epEnrichment,
-                        mediaActionTarget = mediaActionTarget?.forEpisode(ep),
-                        onToggleWatched = { onToggleWatched(ep) },
-                        onQueue = { onQueueEpisode(ep) },
-                        thumbnailModifier = mod,
-                        listState = listState,
-                        onClick = { onEpisodeClick(ep, selectedSeason, index) }
-                    )
+            ) {
+                if (episodes.isEmpty()) {
+                    item { Text("No episodes found.", color = Color.Gray) }
+                } else {
+                    itemsIndexed(
+                        episodes,
+                        key = { _, ep -> "${ep.season}:${ep.episode}:${ep.id}" }
+                    ) { index, ep ->
+                        val isTarget = index == (if (savedIndex in episodes.indices) savedIndex else 0)
+                        val mod = Modifier
+                            .then(if (isTarget) Modifier.focusRequester(focusRequester) else Modifier)
+                            .then(if (index == primaryIndex) Modifier.focusRequester(primaryEpisodeRequester) else Modifier)
+                            .onFocusChanged {
+                                if (it.isFocused) lastFocusedEpisodeBySeason[selectedSeason] = index
+                            }
+                            .then(
+                                if (index == 0) {
+                                    Modifier.focusProperties { up = FocusRequester.Cancel }
+                                } else {
+                                    Modifier
+                                }
+                            )
+
+                        val isCurrentEpisode = currentEpisodeId != null && (
+                            ep.id == currentEpisodeId ||
+                                currentEpisodeId.endsWith(":${ep.season}:${ep.episode}")
+                            )
+                        val epKey = "S${ep.season}:E${ep.episode}"
+                        val epProgress = episodeProgressMap[epKey]
+                        val epEnrichment = episodeEnrichmentMap[epKey]
+
+                        EpisodeItem(
+                            episode = ep,
+                            isPlaying = isCurrentEpisode,
+                            progress = epProgress?.progress,
+                            isWatched = epProgress?.watched ?: false,
+                            enrichment = epEnrichment,
+                            mediaActionTarget = mediaActionTarget?.forEpisode(ep),
+                            onToggleWatched = { onToggleWatched(ep) },
+                            onQueue = { onQueueEpisode(ep) },
+                            leftRequester = if (seasons.isNotEmpty()) seasonRailRequester else null,
+                            thumbnailModifier = mod,
+                            listState = listState,
+                            onClick = { onEpisodeClick(ep, selectedSeason, index) }
+                        )
+                    }
                 }
             }
         }
@@ -705,6 +742,7 @@ fun EpisodeItem(
     mediaActionTarget: MediaActionTarget? = null,
     onToggleWatched: () -> Unit = {},
     onQueue: () -> Unit = {},
+    leftRequester: FocusRequester? = null,
     thumbnailModifier: Modifier = Modifier,
     listState: LazyListState? = null,
     onClick: () -> Unit
@@ -759,7 +797,10 @@ fun EpisodeItem(
                     RoundedCornerShape(6.dp)
                 )
                 .focusRequester(thumbnailRequester)
-                .focusProperties { left = FocusRequester.Cancel; right = queueRequester }
+                .focusProperties {
+                    left = leftRequester ?: FocusRequester.Cancel
+                    right = queueRequester
+                }
                 .onFocusChanged {
                     thumbnailFocused = it.isFocused
                     if (!it.isFocused) dpadLongPressTriggered = false
