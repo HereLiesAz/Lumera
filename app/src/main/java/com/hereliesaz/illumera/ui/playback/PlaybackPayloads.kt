@@ -137,18 +137,28 @@ internal fun sourceDisplayLabel(stream: Stream): String {
     return primary.replace('\n', ' ')
 }
 
-internal fun buildPlayerSourceOption(stream: Stream): PlayerSourceOption? {
+/**
+ * Stable per-stream identity, shared by the details source list (as Stream.sourceSelectionId)
+ * and the player, so excluding, highlighting or remembering one source never matches every
+ * stream from the same addon. Null when the stream has nothing playable.
+ */
+internal fun playerSourceId(stream: Stream): String? {
     val url = resolvePlayableSourceUrl(stream) ?: return null
-    val requestHeaders = stream.behaviorHints?.proxyHeaders?.request.orEmpty()
-    val headerIdentity = requestHeaders.entries
+    val headerIdentity = stream.behaviorHints?.proxyHeaders?.request.orEmpty().entries
         .sortedBy { it.key.lowercase(Locale.ROOT) }
         .joinToString("&") { (key, value) -> "$key=$value" }
-    val sourceId = listOf(
+    return listOf(
         stream.addonTransportUrl.orEmpty(),
         url,
         (stream.fileIdx ?: -1).toString(),
         headerIdentity
     ).joinToString("\u001f")
+}
+
+internal fun buildPlayerSourceOption(stream: Stream): PlayerSourceOption? {
+    val url = resolvePlayableSourceUrl(stream) ?: return null
+    val requestHeaders = stream.behaviorHints?.proxyHeaders?.request.orEmpty()
+    val sourceId = playerSourceId(stream) ?: return null
 
     return PlayerSourceOption(
         id = sourceId,

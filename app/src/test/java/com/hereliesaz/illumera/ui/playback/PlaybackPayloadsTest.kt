@@ -196,4 +196,19 @@ class PlaybackPayloadsTest {
         assertTrue(isSameFile(titled("Show S01E03 2160p"), titled("Show.s01.e03.mkv"), null))
         assertTrue(isSameFile(titled("Show Season 1 pack"), titled("Show S01E03"), null))
     }
+
+    // --- playerSourceId ---
+
+    @Test
+    fun `sources from one addon get distinct ids that match the player`() {
+        val a = playerSourceId(direct1)
+        val b = playerSourceId(direct2)
+        assertTrue(a != null && b != null && a != b)
+        assertEquals(buildPlayerSourceOption(direct1)?.id, a)
+    }
+
+    @Test
+    fun `stream with nothing playable has no source id`() {
+        assertNull(playerSourceId(Stream(name = "X", externalUrl = "https://site")))
+    }
 }

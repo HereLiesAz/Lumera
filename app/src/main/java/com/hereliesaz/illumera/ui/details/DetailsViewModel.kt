@@ -146,6 +146,9 @@ class DetailsViewModel @Inject constructor(
     private var tmdbEnrichmentJob: Job? = null
     private var loadRequestVersion: Long = 0L
     private var loadedContentKey: String? = null
+    // Set only after every stage of loadDetails finished. loadedContentKey is set as soon as meta
+    // arrives, so a load cut short (backing out mid-load) must not count as complete on reopen.
+    private var fullyLoadedKey: String? = null
 
     private data class StreamsCacheEntry(
         val streams: List<Stream>,
@@ -168,6 +171,8 @@ class DetailsViewModel @Inject constructor(
         // Keep current details when reopening the same item (e.g., returning from player).
         if (
             loadedContentKey == requestKey &&
+            fullyLoadedKey == requestKey &&
+            tmdbEnrichmentJob?.isCancelled != true &&
             _state.value.meta != null &&
             !_state.value.isLoading
         ) {
@@ -179,6 +184,7 @@ class DetailsViewModel @Inject constructor(
         }
 
         loadDetailsJob?.cancel()
+        fullyLoadedKey = null
         loadRequestVersion += 1
         val requestVersion = loadRequestVersion
 
@@ -298,6 +304,7 @@ class DetailsViewModel @Inject constructor(
                     preferredAddonBaseUrl = details.addonBaseUrl,
                     preferredAddonRequestId = preferredPrefetchId
                 )
+                if (requestVersion == loadRequestVersion) fullyLoadedKey = requestKey
             } catch (ce: CancellationException) {
                 throw ce
             } catch (e: Exception) {
@@ -328,20 +335,22 @@ class DetailsViewModel @Inject constructor(
         }
 
         _state.value = _state.value.copy(isResumeStateReady = false)
+        // History and next-up are keyed by the canonical id loadDetails uses, not the addon's id.
+        val historyId = _state.value.resolvedId ?: meta.id
         viewModelScope.launch {
             try {
                 val resumePlaybackId = if (meta.type == "series") {
-                    resolveSeriesResumePlaybackId(meta.id, meta.videos)
+                    resolveSeriesResumePlaybackId(historyId, meta.videos)
                 } else {
-                    val movieHistory = dao.getHistoryItem(meta.id)
+                    val movieHistory = dao.getHistoryItem(historyId)
                     if (movieHistory?.watched == true) null else movieHistory?.id
                 }
                 val isMovieWatched = if (meta.type != "series") {
-                    dao.getHistoryItem(meta.id)?.watched == true
+                    dao.getHistoryItem(historyId)?.watched == true
                 } else false
                 if (_state.value.meta?.id == meta.id && _state.value.meta?.type == meta.type) {
                     val episodeProgressMap = if (meta.type == "series") {
-                        buildEpisodeProgressMap(meta.id)
+                        buildEpisodeProgressMap(historyId)
                     } else emptyMap()
                     _state.value = _state.value.copy(
                         resumePlaybackId = resumePlaybackId,
@@ -352,7 +361,7 @@ class DetailsViewModel @Inject constructor(
                     )
                     if (meta.type == "series") {
                         try {
-                            computeAndStoreNextUp(meta.id, meta.name, meta.poster, meta.videos)
+                            computeAndStoreNextUp(historyId, meta.name, meta.poster, meta.videos)
                         } catch (ce: CancellationException) {
                             throw ce
                         } catch (e: Exception) {
@@ -468,11 +477,9 @@ class DetailsViewModel @Inject constructor(
     ) {
         if (videos.isNullOrEmpty()) return
 
-        val latest = dao.getLatestSeriesEpisodeHistory("$seriesId:%")
-        if (latest == null) {
-            dao.deleteSeriesNextUp(profileId, seriesId)
-            return
-        }
+        // Missing local history is not evidence the series was finished: next-up rows imported
+        // from Trakt or Wutch have none. Only explicit clear/unwatch actions delete next-up.
+        val latest = dao.getLatestSeriesEpisodeHistory("$seriesId:%") ?: return
 
         val sortedEpisodes = videos
             .filter { it.season > 0 && it.episode > 0 }
@@ -519,6 +526,9 @@ class DetailsViewModel @Inject constructor(
                 )
             )
         } else {
+            // This addon's episode list may be partial or numbered differently; never downgrade
+            // a pending next-up (e.g. from an import) to complete just because it lacks the episode.
+            if (existing != null && !existing.isComplete) return
             val alreadyComplete = existing?.isComplete == true
             dao.upsertSeriesNextUp(
                 SeriesNextUpEntity(
@@ -896,7 +906,7 @@ class DetailsViewModel @Inject constructor(
         // — so reopening the sources list doesn't lose your place in it.
         val highlightedStreamId = if (rememberSourceSelection) {
             sourceSelectionStore.findPreferredStream(sourceSelectionId, streams)
-                ?.let { it.addonTransportUrl ?: it.url }
+                ?.let { it.sourceSelectionId ?: it.addonTransportUrl ?: it.url }
         } else null
 
         // Update sidebar with results
@@ -1256,7 +1266,8 @@ class DetailsViewModel @Inject constructor(
 
     fun toggleSourceExcluded(stream: Stream) {
         val id = _state.value.activeSourceSelectionId ?: return
-        val streamId = stream.addonTransportUrl ?: stream.url ?: return
+        // Per-stream id: the addon URL alone excluded every source that addon returned.
+        val streamId = stream.sourceSelectionId ?: stream.addonTransportUrl ?: stream.url ?: return
         val current = _state.value.excludedSourceIds
         val updated = if (streamId in current) current - streamId else current + streamId
         sourceSelectionStore.rememberExcludedSources(id, updated)
