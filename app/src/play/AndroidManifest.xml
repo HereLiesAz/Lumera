@@ -2,12 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Google Play builds must target Android TV devices explicitly. Override
-         the optional Leanback declaration inherited from main. -->
-    <uses-feature
-        android:name="android.software.leanback"
-        android:required="true"
-        tools:replace="android:required" />
+    <!-- One bundle serves every device: Leanback stays optional (inherited from
+         main), so Play offers the build to phones, tablets and Android TV alike. -->
 
     <!-- Google Play builds must use Play's update mechanism. Remove the
          sideload-only package install permission inherited from main. -->
