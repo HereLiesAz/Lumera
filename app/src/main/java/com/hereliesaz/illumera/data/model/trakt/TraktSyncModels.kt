@@ -94,7 +94,8 @@ data class TraktActivityTimestamp(
 data class TraktActivityTimestamps(
     @SerializedName("watched_at") val watchedAt: String? = null,
     @SerializedName("paused_at") val pausedAt: String? = null,
-    @SerializedName("updated_at") val updatedAt: String? = null
+    @SerializedName("updated_at") val updatedAt: String? = null,
+    @SerializedName("collected_at") val collectedAt: String? = null
 )
 
 /**
@@ -159,6 +160,18 @@ data class TraktWatchedSeason(
 data class TraktWatchedEpisode(
     val number: Int,
     @SerializedName("last_watched_at") val lastWatchedAt: String?
+)
+
+/**
+ * Response items from GET /sync/collection/movies and /sync/collection/shows.
+ * Only the ids matter to us (collection membership).
+ */
+data class TraktCollectedMovie(
+    val movie: TraktMovie?
+)
+
+data class TraktCollectedShow(
+    val show: TraktShow?
 )
 
 /**

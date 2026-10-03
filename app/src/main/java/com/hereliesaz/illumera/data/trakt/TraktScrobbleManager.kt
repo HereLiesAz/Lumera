@@ -2,7 +2,6 @@ package com.hereliesaz.illumera.data.trakt
 
 import android.util.Log
 import com.hereliesaz.illumera.data.local.AddonDao
-import com.hereliesaz.illumera.data.model.trakt.TraktIds
 import com.hereliesaz.illumera.data.model.trakt.TraktScrobbleEpisode
 import com.hereliesaz.illumera.data.model.trakt.TraktScrobbleMovie
 import com.hereliesaz.illumera.data.model.trakt.TraktScrobbleRequest
@@ -183,15 +182,17 @@ class TraktScrobbleManager @Inject constructor(
                 return null
             }
 
+            val showIds = traktIdsFor(imdbId) ?: return null
             return TraktScrobbleRequest(
-                show = TraktScrobbleShow(ids = TraktIds(imdb = imdbId)),
+                show = TraktScrobbleShow(ids = showIds),
                 episode = TraktScrobbleEpisode(season = season, number = episode),
                 progress = progress
             )
         } else {
-            // Movie format: "tt1234567"
+            // Movie format: "tt1234567" or "tmdb:123"
+            val movieIds = traktIdsFor(playbackId) ?: return null
             return TraktScrobbleRequest(
-                movie = TraktScrobbleMovie(ids = TraktIds(imdb = playbackId)),
+                movie = TraktScrobbleMovie(ids = movieIds),
                 progress = progress
             )
         }
