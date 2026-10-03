@@ -105,6 +105,7 @@ build_arch() {
 
     cmake "$MBEDTLS_SRC" \
         -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+        -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
         -DANDROID_ABI=$ANDROID_ABI \
         -DANDROID_PLATFORM=android-$API_LEVEL \
         -DCMAKE_INSTALL_PREFIX="$MBEDTLS_PREFIX" \
@@ -193,7 +194,7 @@ build_arch() {
         --disable-asm \
         \
         --extra-cflags="-fPIC -Os -I$MBEDTLS_PREFIX/include" \
-        --extra-ldflags="-Wl,--gc-sections -L$MBEDTLS_PREFIX/lib" \
+        --extra-ldflags="-Wl,-z,max-page-size=16384 -Wl,--gc-sections -L$MBEDTLS_PREFIX/lib" \
         --extra-libs="-lmbedtls -lmbedx509 -lmbedcrypto"
 
     make -j$(nproc 2>/dev/null || echo 4)

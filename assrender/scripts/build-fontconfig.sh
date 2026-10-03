@@ -51,6 +51,8 @@ build_arch() {
     local PREFIX="$PROJECT_DIR/prebuilt/$ANDROID_ABI"
 
     export CC="${TOOLCHAIN}/bin/${TARGET}${API_LEVEL}-clang"
+    # Android 15+ devices with 16 KB pages require 16 KB-aligned ELF segments (Play requirement).
+    export LDFLAGS="-Wl,-z,max-page-size=16384"
     export CXX="${TOOLCHAIN}/bin/${TARGET}${API_LEVEL}-clang++"
     export AR="${TOOLCHAIN}/bin/llvm-ar"
     export RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
@@ -99,7 +101,7 @@ build_arch() {
         --with-cache-dir=/data/local/tmp/fontconfig \
         --with-baseconfigdir=/system/etc/fonts \
         CFLAGS="-fPIC -Os -I$PREFIX/include -I$PREFIX/include/freetype2" \
-        LDFLAGS="-L$PREFIX/lib" \
+        LDFLAGS="-Wl,-z,max-page-size=16384 -L$PREFIX/lib" \
         FREETYPE_CFLAGS="-I$PREFIX/include/freetype2" \
         FREETYPE_LIBS="-L$PREFIX/lib -lfreetype"
 
