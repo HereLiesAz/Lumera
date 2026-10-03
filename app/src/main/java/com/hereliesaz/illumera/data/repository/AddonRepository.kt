@@ -1,6 +1,7 @@
 package com.hereliesaz.illumera.data.repository
 
 import com.google.gson.Gson
+import com.hereliesaz.illumera.crash.AppErrors
 import com.hereliesaz.illumera.data.local.AddonDao
 import com.hereliesaz.illumera.data.model.AddonEntity
 import com.hereliesaz.illumera.data.model.CatalogConfigEntity
@@ -12,6 +13,7 @@ import com.hereliesaz.illumera.domain.HomeRow
 import com.hereliesaz.illumera.domain.HubGroupRow
 import com.hereliesaz.illumera.domain.HubItem
 import com.hereliesaz.illumera.domain.HubShape
+import com.hereliesaz.illumera.ui.playback.playerSourceId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -41,6 +43,7 @@ class AddonRepository @Inject constructor(
     private fun MetaItem?.sanitize(): MetaItem? =
         this?.takeIf { it.id != null && it.name != null && it.type != null }
     private val CATALOG_TIMEOUT_MS = 10_000L // 10 seconds per catalog request
+    private val TAG = "AddonRepository"
     private val STREAM_TIMEOUT_MS = 20_000L  // 20 seconds per stream request (torrent addons need more time)
 
     /**
@@ -272,30 +275,33 @@ class AddonRepository @Inject constructor(
                     id
                 }
 
-                // The origin addon is authoritative for its own catalog/meta IDs. For all
-                // other addons, honor manifest idPrefixes so a tmdb:/kitsu:/custom ID is
-                // not blindly sent to an IMDb-only stream endpoint.
-                if (!isPreferred && !addon.supportsIdPrefix(requestId)) {
-                    return@async emptyList()
-                }
+                // Every enabled stream addon is asked. Gating on the manifest's top-level
+                // idPrefixes silently dropped whole addons: Stremio lets the stream resource
+                // declare its own prefixes, and stored manifests are never refreshed. An addon
+                // that can't serve this id answers empty, which costs one request.
 
                 try {
                     val url = "$addonBase/stream/$type/$requestId.json"
                     val response = withTimeout(STREAM_TIMEOUT_MS) { api.getStreams(url) }
                     val sourceLabel = addon.nickname ?: addon.name
                     response.streams.orEmpty().map { stream ->
-                        stream.copy(
+                        val tagged = stream.copy(
                             addonTransportUrl = addon.transportUrl,
                             addonDisplayName = sourceLabel,
                             addonRequestType = type,
                             addonRequestId = requestId
                         )
+                        // Without a per-stream id every key fell back to the addon URL, so
+                        // excluding one source excluded the whole addon.
+                        tagged.copy(sourceSelectionId = playerSourceId(tagged))
                     }
-                } catch (_: TimeoutCancellationException) {
+                } catch (timeout: TimeoutCancellationException) {
+                    AppErrors.w(TAG, "Streams from ${addon.name} timed out after ${STREAM_TIMEOUT_MS}ms", timeout)
                     emptyList()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    AppErrors.w(TAG, "Streams from ${addon.name} failed for $type/$requestId", e)
                     emptyList()
                 }
             }
@@ -501,20 +507,6 @@ class AddonRepository @Inject constructor(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) { null }
-    }
-
-    private fun AddonEntity.supportsIdPrefix(id: String): Boolean {
-        val prefixes: List<String> = try {
-            gson.fromJson(idPrefixesJson, Array<String>::class.java)?.toList() ?: emptyList()
-        } catch (_: Exception) {
-            emptyList()
-        }
-        if (prefixes.isEmpty()) return true
-        val normalizedId = id.lowercase()
-        return prefixes.any { prefix ->
-            val normalizedPrefix = prefix.trim().lowercase()
-            normalizedPrefix.isNotEmpty() && normalizedId.startsWith(normalizedPrefix)
-        }
     }
 
     private fun AddonEntity.supportsMetaType(type: String): Boolean {

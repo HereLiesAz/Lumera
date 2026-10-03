@@ -73,33 +73,40 @@ class TmdbMetadataService @Inject constructor(
                 append(",en,null")
             }
 
+            // A failed sub-request (e.g. HTTP 429) yields a null body, not an exception. Track it
+            // so a partial enrichment is shown but never cached for the rest of the process.
+            val incomplete = java.util.concurrent.atomic.AtomicBoolean(false)
+            fun <T> retrofit2.Response<T>.bodyOrMark(): T? {
+                if (!isSuccessful) incomplete.set(true)
+                return body()
+            }
             val (details, credits, images, ageRating) = coroutineScope {
                 val detailsDeferred = async {
                     when (tmdbType) {
                         "tv" -> tmdbApi.getTvDetails(numericId, apiKey, normalizedLanguage)
                         else -> tmdbApi.getMovieDetails(numericId, apiKey, normalizedLanguage)
-                    }.body()
+                    }.bodyOrMark()
                 }
                 val creditsDeferred = async {
                     when (tmdbType) {
                         "tv" -> tmdbApi.getTvCredits(numericId, apiKey, normalizedLanguage)
                         else -> tmdbApi.getMovieCredits(numericId, apiKey, normalizedLanguage)
-                    }.body()
+                    }.bodyOrMark()
                 }
                 val imagesDeferred = async {
                     when (tmdbType) {
                         "tv" -> tmdbApi.getTvImages(numericId, apiKey, includeImageLanguage)
                         else -> tmdbApi.getMovieImages(numericId, apiKey, includeImageLanguage)
-                    }.body()
+                    }.bodyOrMark()
                 }
                 val ageRatingDeferred = async {
                     when (tmdbType) {
                         "tv" -> {
-                            val ratings = tmdbApi.getTvContentRatings(numericId, apiKey).body()?.results.orEmpty()
+                            val ratings = tmdbApi.getTvContentRatings(numericId, apiKey).bodyOrMark()?.results.orEmpty()
                             selectTvAgeRating(ratings, normalizedLanguage)
                         }
                         else -> {
-                            val releases = tmdbApi.getMovieReleaseDates(numericId, apiKey).body()?.results.orEmpty()
+                            val releases = tmdbApi.getMovieReleaseDates(numericId, apiKey).bodyOrMark()?.results.orEmpty()
                             selectMovieAgeRating(releases, normalizedLanguage)
                         }
                     }
@@ -225,7 +232,7 @@ class TmdbMetadataService @Inject constructor(
                 collectionId = collectionId,
                 collectionName = collectionName
             )
-            enrichmentCache[cacheKey] = enrichment
+            if (!incomplete.get()) enrichmentCache[cacheKey] = enrichment
             enrichment
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -249,10 +256,13 @@ class TmdbMetadataService @Inject constructor(
 
         val numericId = tmdbId.toIntOrNull() ?: return@withContext emptyMap()
         val result = mutableMapOf<Pair<Int, Int>, TmdbEpisodeEnrichment>()
+        // Any failed season leaves the result partial; never cache it as final.
+        var hadFailure = false
 
         seasonNumbers.distinct().forEach { season ->
             try {
                 val response = tmdbApi.getTvSeasonDetails(numericId, season, apiKey, normalizedLanguage)
+                if (!response.isSuccessful) hadFailure = true
                 response.body()?.episodes.orEmpty().forEach { ep ->
                     val epNum = ep.episodeNumber ?: return@forEach
                     result[season to epNum] = TmdbEpisodeEnrichment(
@@ -266,11 +276,12 @@ class TmdbMetadataService @Inject constructor(
             } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
+                hadFailure = true
                 Log.w(TAG, "Failed to fetch TMDB season $season: ${e.message}")
             }
         }
 
-        if (result.isNotEmpty()) episodeCache[cacheKey] = result
+        if (result.isNotEmpty() && !hadFailure) episodeCache[cacheKey] = result
         result
     }
 
