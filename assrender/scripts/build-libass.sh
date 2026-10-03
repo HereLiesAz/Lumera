@@ -117,6 +117,7 @@ build_arch() {
         --with-bzip2=no \
         --with-png=no \
         --with-harfbuzz=no \
+        --with-brotli=no \
         CFLAGS="-fPIC -Os"
     make -j$(nproc 2>/dev/null || echo 4)
     make install

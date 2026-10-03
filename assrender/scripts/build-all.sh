@@ -17,11 +17,11 @@ echo ""
 ARCH=${1:-""}
 
 echo "Step 1: Building libass + dependencies..."
-"$SCRIPT_DIR/build-libass.sh" $ARCH
+bash "$SCRIPT_DIR/build-libass.sh" $ARCH
 
 echo ""
 echo "Step 2: Building FFmpeg (subtitle-only)..."
-"$SCRIPT_DIR/build-ffmpeg.sh" $ARCH
+bash "$SCRIPT_DIR/build-ffmpeg.sh" $ARCH
 
 echo ""
 echo "============================================"
