@@ -352,7 +352,7 @@ private fun DiscoverRailSection(
 }
 
 @Composable
-private fun PosterCard(
+internal fun PosterCard(
     item: TmdbMetaPreview,
     accentColor: Color,
     modifier: Modifier = Modifier,

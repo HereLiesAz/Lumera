@@ -273,7 +273,8 @@ fun QueueSection(
             // Stays enabled while refreshing: disabling the button the viewer just pressed took
             // focus away from under them. Pressing again restarts the refresh (newest wins).
             Button(
-                onClick = { scope.launch { queueManager.refreshSuggestions(resetDismissed = true) } },
+                // Keeps removed titles removed, and brings in titles not already showing.
+                onClick = { scope.launch { queueManager.refreshSuggestions(rotate = true) } },
                 enabled = state.preferences.enabled,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = refreshColors.container,

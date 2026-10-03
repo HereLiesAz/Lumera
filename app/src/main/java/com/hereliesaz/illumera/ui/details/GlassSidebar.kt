@@ -819,13 +819,17 @@ fun EpisodeItem(
                     if (!activation) return@onPreviewKeyEvent false
                     when (native.action) {
                         KeyEvent.ACTION_DOWN -> {
-                            if (native.repeatCount > 0) dpadLongPressTriggered = true
+                            // Held past the first key repeat: open the menu now, not on release.
+                            if (native.repeatCount > 0 && !dpadLongPressTriggered) {
+                                dpadLongPressTriggered = true
+                                contextMenuExpanded = true
+                            }
                             dpadLongPressTriggered
                         }
                         KeyEvent.ACTION_UP -> {
                             if (dpadLongPressTriggered) {
+                                // The menu already opened while held; the release is not a click.
                                 dpadLongPressTriggered = false
-                                contextMenuExpanded = true
                                 true
                             } else {
                                 onClick()
@@ -1122,13 +1126,17 @@ fun RawSourceItem(
                     if (!activation) return@onPreviewKeyEvent false
                     when (native.action) {
                         KeyEvent.ACTION_DOWN -> {
-                            if (hasContextActions && native.repeatCount > 0) dpadLongPressTriggered = true
+                            // Held past the first key repeat: open the menu now, not on release.
+                            if (hasContextActions && native.repeatCount > 0 && !dpadLongPressTriggered) {
+                                dpadLongPressTriggered = true
+                                menuExpanded = true
+                            }
                             dpadLongPressTriggered
                         }
                         KeyEvent.ACTION_UP -> {
                             if (dpadLongPressTriggered) {
+                                // The menu already opened while held; the release is not a click.
                                 dpadLongPressTriggered = false
-                                menuExpanded = true
                                 true
                             } else {
                                 onClick()

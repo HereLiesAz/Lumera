@@ -272,6 +272,58 @@ class QueueManagerTest {
         assertEquals(setOf("tt-started", "tt-show:1:2"), queue.state.value.suggestions.map { it.id }.toSet())
     }
 
+    private fun historyOf(vararg ids: String): List<WatchHistoryEntity> = ids.mapIndexed { index, id ->
+        WatchHistoryEntity(id = id, title = id, poster = null, position = 1, duration = 100, lastWatched = index.toLong(), type = "movie")
+    }
+
+    @Test
+    fun removedSuggestionStaysGoneWhenTheViewerRefreshes() = runTest {
+        val addonDao = mockk<AddonDao>(relaxed = true)
+        coEvery { addonDao.getAllWatchHistoryOnce() } returns historyOf("tt-a", "tt-b")
+        val queue = newManager(addonDao = addonDao)
+        queue.setEnabled(true)
+        queue.refreshSuggestions()
+        val removed = queue.state.value.suggestions.first { it.id == "tt-a" }
+
+        queue.removeSuggestion(removed.stableKey)
+        queue.refreshSuggestions(rotate = true)
+
+        assertEquals(listOf("tt-b"), queue.state.value.suggestions.map { it.id })
+    }
+
+    @Test
+    fun removedManualItemDoesNotComeBackAsASuggestion() = runTest {
+        val addonDao = mockk<AddonDao>(relaxed = true)
+        coEvery { addonDao.getAllWatchHistoryOnce() } returns historyOf("tt-a", "tt-b")
+        val queue = newManager(addonDao = addonDao)
+        queue.setEnabled(true)
+        val item = QueueItem(id = "tt-a", type = "movie", title = "tt-a")
+        queue.add(item)
+
+        queue.remove(item.stableKey)
+        queue.refreshSuggestions(rotate = true)
+
+        assertFalse(queue.state.value.suggestions.any { it.id == "tt-a" })
+    }
+
+    @Test
+    fun viewerRefreshBringsInTitlesNotAlreadyShowing() = runTest {
+        val addonDao = mockk<AddonDao>(relaxed = true)
+        val ids = (1..14).map { "tt-$it" }.toTypedArray()
+        coEvery { addonDao.getAllWatchHistoryOnce() } returns historyOf(*ids)
+        val queue = newManager(addonDao = addonDao)
+        queue.setEnabled(true)
+        queue.refreshSuggestions()
+        val before = queue.state.value.suggestions.map { it.id }.toSet()
+        val notShown = ids.toSet() - before
+
+        queue.refreshSuggestions(rotate = true)
+
+        val after = queue.state.value.suggestions.map { it.id }.toSet()
+        assertTrue("every title not shown before is shown now", after.containsAll(notShown))
+        assertEquals(before.size, after.size)
+    }
+
     @Test
     fun clearForProfileRemovesPersistedQueueWithoutTouchingOtherProfile() {
         manager.add(QueueItem(id = "one", type = "movie", title = "One"))

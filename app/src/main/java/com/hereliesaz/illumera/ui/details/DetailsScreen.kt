@@ -36,6 +36,7 @@ import com.hereliesaz.illumera.ui.components.ButtonEmphasis
 import com.hereliesaz.illumera.ui.components.buttonColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Recommend
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
@@ -694,6 +695,17 @@ fun DetailsScreen(
                             )
                         }
 
+                        val openMoreLikeThis = com.hereliesaz.illumera.ui.components.LocalOpenMoreLikeThis.current
+                        val likeId = state.resolvedId ?: state.meta?.id
+                        if (openMoreLikeThis != null && likeId != null) {
+                            ExpandableIconButton(
+                                label = "More like this",
+                                icon = Icons.Default.Recommend,
+                                modifier = Modifier.restorableFocus("hero:morelikethis", focusMemory),
+                                onClick = { openMoreLikeThis(type, likeId, state.meta?.name.orEmpty()) }
+                            )
+                        }
+
                         if (soundtrackImdbId != null) {
                             ExpandableIconButton(
                                 label = "Soundtrack",
@@ -768,6 +780,17 @@ fun DetailsScreen(
                                 icon = Icons.Default.Videocam,
                                 modifier = Modifier.restorableFocus("hero:trailer", focusMemory),
                                 onClick = { onTrailerClick(movieTrailer.key, movieTrailer.name) }
+                            )
+                        }
+
+                        val openMoreLikeThis = com.hereliesaz.illumera.ui.components.LocalOpenMoreLikeThis.current
+                        val likeId = state.resolvedId ?: state.meta?.id
+                        if (openMoreLikeThis != null && likeId != null) {
+                            ExpandableIconButton(
+                                label = "More like this",
+                                icon = Icons.Default.Recommend,
+                                modifier = Modifier.restorableFocus("hero:morelikethis", focusMemory),
+                                onClick = { openMoreLikeThis(type, likeId, state.meta?.name.orEmpty()) }
                             )
                         }
 

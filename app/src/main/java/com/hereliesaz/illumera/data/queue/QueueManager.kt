@@ -246,6 +246,11 @@ class QueueManager @Inject constructor(
     @Synchronized
     fun remove(key: String) {
         val scope = ensureScopeLocked() ?: return
+        // Removed means gone: a refresh must not bring it back as a suggestion either.
+        val dismissed = dismissedSuggestionKeys(scope.profileId).toMutableSet().apply { add(key) }
+        prefs.edit()
+            .putStringSet(profileKey(scope.profileId, KEY_DISMISSED_SUGGESTIONS), dismissed)
+            .apply()
         commit(scope, _state.value.copy(manualItems = _state.value.manualItems.filterNot { it.stableKey == key }))
     }
 
@@ -382,10 +387,11 @@ class QueueManager @Inject constructor(
      */
     suspend fun refreshSuggestions(
         resetDismissed: Boolean = false,
-        preserveExisting: Boolean = false
+        preserveExisting: Boolean = false,
+        rotate: Boolean = false
     ): Unit = coroutineScope {
         val run = async(start = CoroutineStart.LAZY) {
-            runSuggestionRefresh(resetDismissed, preserveExisting)
+            runSuggestionRefresh(resetDismissed, preserveExisting, rotate)
         }
         val previous = synchronized(this@QueueManager) { refreshRun.also { refreshRun = run } }
         try {
@@ -399,9 +405,17 @@ class QueueManager @Inject constructor(
         }
     }
 
+    /**
+     * [rotate] is the viewer pressing Refresh: the sources barely change between presses, so a
+     * deterministic ranking returned the same row every time. It shuffles within each rating
+     * tier and puts titles not currently shown first, falling back to shown ones only when
+     * there are not enough others. Automatic refreshes stay deterministic so the row never
+     * reshuffles on its own.
+     */
     private suspend fun runSuggestionRefresh(
         resetDismissed: Boolean,
-        preserveExisting: Boolean
+        preserveExisting: Boolean,
+        rotate: Boolean = false
     ) {
         val scope = captureScope() ?: return
         val current = stateForScope(scope) ?: return
@@ -475,7 +489,7 @@ class QueueManager @Inject constructor(
             // Enabling "only unseen" used to throw away the suggestions already on screen.
             // Re-seed from any still-valid existing suggestions so a refresh cannot collapse
             // to an empty row just because a remote source is temporarily unavailable.
-            if (current.preferences.onlyUnseenSuggestions && current.preferences.suggestionSources.isNotEmpty()) {
+            if (!rotate && current.preferences.onlyUnseenSuggestions && current.preferences.suggestionSources.isNotEmpty()) {
                 current.suggestions.asSequence()
                     .filter { it.stableKey !in dismissedKeys }
                     .filter(::isEligible)
@@ -602,17 +616,27 @@ class QueueManager @Inject constructor(
 
             if (!isCurrentScope(scope)) return
             val latestDismissedKeys = dismissedSuggestionKeys(scope.profileId)
-            val ranked = candidates
+            val pool = candidates
                 .asSequence()
                 .filter(::isEligible)
                 .distinctBy { it.stableKey }
                 .filter { it.stableKey !in latestDismissedKeys }
                 .filter { prefs.getInt(ratingKey(scope.profileId, it.stableKey), 0) >= 0 }
-                .sortedWith(
-                    compareByDescending<QueueItem> {
-                        prefs.getInt(ratingKey(scope.profileId, it.stableKey), 0)
-                    }.thenBy { it.title }
-                )
+                .toList()
+            val byRatingTier = pool
+                .groupBy { prefs.getInt(ratingKey(scope.profileId, it.stableKey), 0) }
+                .toSortedMap(compareByDescending { it })
+                .values
+                .flatMap { tier -> if (rotate) tier.shuffled() else tier.sortedBy { it.title } }
+            val shownKeys = current.suggestions.mapTo(mutableSetOf()) { it.stableKey }
+            val ordered = if (rotate) {
+                val (fresh, shown) = byRatingTier.partition { it.stableKey !in shownKeys }
+                fresh + shown
+            } else {
+                byRatingTier
+            }
+            val ranked = ordered
+                .asSequence()
                 .take(SUGGESTION_COUNT * 4)
                 .map {
                     it.copy(rating = prefs.getInt(ratingKey(scope.profileId, it.stableKey), 0))
