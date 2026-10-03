@@ -70,6 +70,9 @@ data class PlaybackSettings(
     val preferredAudioLanguageSecondary: String = "",
     val preferredSubtitleLanguage: String = "",
     val preferredSubtitleLanguageSecondary: String = "",
+    /** Profile Force modes ("off", "primary", "primary_or_secondary"). */
+    val sourceAudioLanguageRequirement: String = "off",
+    val sourceSubtitleLanguageRequirement: String = "off",
     val subtitleSize: Int = 100,
     val subtitleOffset: Int = 0,
     val subtitleTextColor: Int = 0xFFFFFFFF.toInt(),
@@ -106,6 +109,8 @@ data class PlayerUiState(
     val currentSourceId: String? = null,
     val selectedAudioTrackId: String? = null,
     val selectedSubtitleTrackId: String? = null,
+    /** User's subtitle pick to remember when the shown one is an automatic "None". */
+    val subtitleChoiceToRemember: String? = null,
     val resizeMode: Int = 0,
     val subtitleVerticalOffsetPercent: Int = 0,
     val subtitleSizePercent: Int = 100,

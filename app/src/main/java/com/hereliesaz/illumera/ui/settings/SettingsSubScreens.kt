@@ -1832,7 +1832,7 @@ fun SourcePreferencesSettings(
 
             SettingToggleRow(
                 label = "Skip seedless sources",
-                subtitle = "Hide sources that explicitly report 0 seeds",
+                subtitle = "Try sources that explicitly report 0 seeds last",
                 isChecked = currentProfile.sourceSkipSeedless,
                 onCheckedChange = { viewModel.updateSourceSkipSeedless(currentProfile.id, it) },
                 onBack = onGoBack
@@ -1845,7 +1845,7 @@ fun SourcePreferencesSettings(
                 color = Color.White
             )
             Text(
-                "Uses the primary and secondary languages selected under Playback. Forced sources must advertise the required language.",
+                "Uses the primary and secondary languages selected under Playback. Audio: sources advertising the forced language are tried first and play in it; others are tried last. CC: the forced language is used whenever a source has it; otherwise CC starts off.",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
                 color = Color.White.copy(0.6f),
                 modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
@@ -1923,7 +1923,7 @@ fun SourcePreferencesSettings(
                 color = Color.White
             )
             Text(
-                "Sources with disabled qualities will be hidden.",
+                "Sources with disabled qualities are tried last.",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
                 color = Color.White.copy(0.6f),
                 modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
@@ -1990,7 +1990,7 @@ fun SourcePreferencesSettings(
                 color = Color.White
             )
             Text(
-                "Hide sources with these codecs and formats.",
+                "Try sources with these codecs and formats last.",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
                 color = Color.White.copy(0.6f),
                 modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)

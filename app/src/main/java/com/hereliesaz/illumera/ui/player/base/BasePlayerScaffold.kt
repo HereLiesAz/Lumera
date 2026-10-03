@@ -1454,22 +1454,22 @@ private fun PlayerControlsOverlay(
                         iconSize = 29.dp
                     )
 
-                    if (showNextSourceControl) {
+                    if (showNextEpisodeControl) {
                         ControlButton(
-                            icon = Icons.Default.ArrowForward,
-                            contentDescription = "Next source",
-                            onClick = onNextSource,
+                            icon = Icons.Default.SkipNext,
+                            contentDescription = "Next episode",
+                            onClick = onNextEpisode,
                             onFocused = onResetHideTimer,
                             buttonSize = 44.dp,
                             iconSize = 20.dp
                         )
                     }
 
-                    if (showNextEpisodeControl) {
+                    if (showNextSourceControl) {
                         ControlButton(
-                            icon = Icons.Default.SkipNext,
-                            contentDescription = "Next episode",
-                            onClick = onNextEpisode,
+                            icon = Icons.Default.ArrowForward,
+                            contentDescription = "Next source",
+                            onClick = onNextSource,
                             onFocused = onResetHideTimer,
                             buttonSize = 44.dp,
                             iconSize = 20.dp
@@ -2509,10 +2509,12 @@ private fun BoxScope.SubtitleSelectionSidePanel(
 
     val selectedLanguageGroup = languageGroups.firstOrNull { it.key == selectedLanguageKey }
         ?: languageGroups.firstOrNull()
+    // "None" heads every subtitle list, so subtitles can be turned off from any language.
+    val subtitleOffTrack = remember(subtitleTracks) { subtitleTracks.firstOrNull { isSubtitleOffTrack(it) } }
     val selectedLanguageTracks = if (selectedLanguageGroup?.isOffGroup == true) {
-        emptyList()
+        listOfNotNull(subtitleOffTrack)
     } else {
-        selectedLanguageGroup?.tracks.orEmpty()
+        listOfNotNull(subtitleOffTrack) + selectedLanguageGroup?.tracks.orEmpty()
     }
     val selectedTrackIndex = remember(selectedLanguageTracks, effectiveSelectedSubtitleId) {
         val index = selectedLanguageTracks.indexOfFirst { track -> track.id == effectiveSelectedSubtitleId }
@@ -2544,7 +2546,7 @@ private fun BoxScope.SubtitleSelectionSidePanel(
     }
     val currentSelectionText = remember(selectedTrack, selectedLanguageGroup) {
         when {
-            selectedTrack == null || isSubtitleOffTrack(selectedTrack) -> "Current: Off"
+            selectedTrack == null || isSubtitleOffTrack(selectedTrack) -> "Current: None"
             else -> {
                 val language = selectedLanguageGroup?.displayName?.takeIf { it.isNotBlank() } ?: "Unknown"
                 "Current: $language - ${selectedTrack.label}"
@@ -3420,7 +3422,8 @@ private fun buildSubtitleVariantDisplayLabel(track: PlayerTrackOption): String {
     ).takeIf { displayName ->
         displayName.isNotBlank() &&
             !displayName.equals("Unknown", ignoreCase = true) &&
-            !displayName.equals("Off", ignoreCase = true)
+            !displayName.equals("Off", ignoreCase = true) &&
+            !displayName.equals("None", ignoreCase = true)
     } ?: return baseLabel
 
     if (labelAlreadyContainsLanguage(baseLabel, languageName, track.language)) return baseLabel
@@ -3481,7 +3484,7 @@ private fun buildSubtitleLanguageGroups(
     if (offTrack != null) {
         groups += SubtitleLanguageGroup(
             key = "__off__",
-            displayName = offTrack.label.ifBlank { "Off" },
+            displayName = offTrack.label.ifBlank { "None" },
             tracks = listOf(offTrack),
             isOffGroup = true
         )
@@ -3547,7 +3550,7 @@ private fun resolveSelectedSubtitleLanguageKey(
 private fun subtitleLanguageKey(language: String?): String = normalizeLanguageToIso2(language)
 
 private fun subtitleLanguageDisplayName(groupKey: String, rawLanguage: String?): String {
-    if (groupKey == "__off__") return "Off"
+    if (groupKey == "__off__") return "None"
     if (groupKey == "und") return "Unknown"
     if (groupKey.contains('-')) {
         val canonicalDisplay = Locale.forLanguageTag(groupKey).displayName
@@ -3582,7 +3585,8 @@ private fun subtitleLanguageDisplayName(groupKey: String, rawLanguage: String?):
 
 private fun isSubtitleOffTrack(track: PlayerTrackOption): Boolean {
     return track.id == SUBTITLE_OFF_TRACK_ID ||
-        (track.language.isNullOrBlank() && track.label.equals("off", ignoreCase = true))
+        (track.language.isNullOrBlank() &&
+            (track.label.equals("off", ignoreCase = true) || track.label.equals("none", ignoreCase = true)))
 }
 
 private fun buildAudioLanguageGroups(

@@ -294,7 +294,7 @@ fun PlayerScreen(
                 isCompleted = !hasError && completed,
                 selectedSourceUrl = selectedSourceUrl,
                 selectedAudioTrackId = uiState.selectedAudioTrackId,
-                selectedSubtitleTrackId = uiState.selectedSubtitleTrackId,
+                selectedSubtitleTrackId = uiState.subtitleChoiceToRemember ?: uiState.selectedSubtitleTrackId,
                 subtitleDelayMs = uiState.subtitleDelayMs
             )
         )
