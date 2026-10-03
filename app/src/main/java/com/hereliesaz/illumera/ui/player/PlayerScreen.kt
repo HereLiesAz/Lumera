@@ -1,6 +1,10 @@
 package com.hereliesaz.illumera.ui.player
 
+import android.graphics.Rect
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -192,10 +196,27 @@ fun PlayerScreen(
         }
     }
 
+    val videoSize by remember(playbackController) {
+        (playbackController as? ExoPlayerBackend)?.videoSize ?: MutableStateFlow(0 to 0)
+    }.collectAsState()
+    val isInPip by rememberPictureInPictureState(
+        isPlaying = uiState.playWhenReady && !uiState.isEnded && uiState.errorMessage.isNullOrBlank(),
+        videoWidth = videoSize.first,
+        videoHeight = videoSize.second,
+        sourceRectHint = remember(hostView.width, hostView.height) {
+            Rect(0, 0, hostView.width, hostView.height)
+        },
+        onTogglePlayPause = { playbackController.togglePlayPause() },
+        onSeekBy = { playbackController.seekBy(it) },
+        onPipDismissed = { playbackController.pause() }
+    )
+
     DisposableEffect(lifecycleOwner, playbackController) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
-                playbackController.pause()
+                // Keep playing in the PiP window; dismissing it pauses via onPipDismissed.
+                val inPip = context.findActivity()?.isInPictureInPictureMode == true
+                if (!inPip) playbackController.pause()
                 val state = playbackController.uiState.value
                 val pos = state.positionMs.coerceAtLeast(0L)
                 val dur = state.durationMs.takeIf { it > 0L }
@@ -338,6 +359,14 @@ fun PlayerScreen(
             // leave the player and return to Details instead of hanging on an error overlay.
             persistAndBack()
         }
+    }
+
+    if (isInPip) {
+        // PiP window: video only, no controls, overlays or panels.
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+            renderSurface.Content(Modifier.fillMaxSize())
+        }
+        return
     }
 
     Box(modifier = Modifier.fillMaxSize()) {

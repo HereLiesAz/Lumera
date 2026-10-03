@@ -1,5 +1,6 @@
 package com.hereliesaz.illumera.ui.home
 
+import com.hereliesaz.illumera.ui.utils.backdropDecodeSize
 import com.hereliesaz.illumera.ui.navigation.openNavDrawer
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateDpAsState
@@ -265,7 +266,7 @@ fun HeroCarousel(
                     ImageRequest.Builder(context)
                         .data(imageUrl)
                         .crossfade(false)
-                        .size(1920, 1080)
+                        .size(backdropDecodeSize(context))
                         .allowHardware(true)
                         .build()
                 }
