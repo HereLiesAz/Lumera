@@ -828,6 +828,7 @@ class ExoPlayerBackend(
         if (released) return
         val player = exoPlayer ?: return
         val id = normalizeSubtitleSelectionId(trackId) ?: SUBTITLE_OFF_ID
+        _uiState.update { it.copy(subtitleChoiceToRemember = null) }
         val builder = player.trackSelectionParameters.buildUpon()
         builder.clearOverridesOfType(C.TRACK_TYPE_TEXT)
 
@@ -1904,7 +1905,7 @@ class ExoPlayerBackend(
             add(
                 PlayerTrackOption(
                     id = SUBTITLE_OFF_ID,
-                    label = "Off",
+                    label = "None",
                     selected = resolvedSelectedSubtitleId == SUBTITLE_OFF_ID
                 )
             )
@@ -1983,33 +1984,41 @@ class ExoPlayerBackend(
             }
         }
 
-        // Forced subtitles: the required language is the default track; a source without
-        // it starts with subtitles off. Waits for the track list (audio present) so a
-        // not-yet-parsed source isn't mistaken for one without the language.
-        val forcedSubtitleLanguages = forcedSubtitleLanguages()
-        val subtitleOptions = _subtitleTracks.value.filter { it.id != SUBTITLE_OFF_ID }
-        val forcedSubtitleId = resolveForcedTrack(
-            subtitleOptions, forcedSubtitleLanguages, pendingSubtitleTrackId
-        ) { tracks, language -> findSubtitleTrackByLanguage(tracks, language) }
-        val forcedSubtitleMissing = forcedSubtitleLanguages.isNotEmpty() &&
-            _audioTracks.value.isNotEmpty() &&
-            forcedSubtitleLanguages.none { findSubtitleTrackByLanguage(subtitleOptions, it) != null }
+        // Subtitles stay off until the user turns them on (a remembered non-"None" pick).
+        // Once on, a forced language is used whenever the source has it; a source without
+        // it starts with subtitles off. The missing check waits for the track list (audio
+        // present) so a not-yet-parsed source isn't mistaken for one without the language.
         val subtitleId = pendingSubtitleTrackId
-        if (forcedSubtitleId != null && !hasAppliedSubtitleLanguagePref) {
-            selectSubtitleTrack(forcedSubtitleId)
-            hasAppliedSubtitleLanguagePref = true
-        } else if (forcedSubtitleMissing && !hasAppliedSubtitleLanguagePref) {
-            selectSubtitleTrack(SUBTITLE_OFF_ID)
-            hasAppliedSubtitleLanguagePref = true
-        } else if (!subtitleId.isNullOrBlank()) {
-            selectSubtitleTrack(subtitleId)
-        } else if (!hasAppliedSubtitleLanguagePref) {
-            val preferredId = resolvePreferredSubtitleTrack()
-            if (preferredId != null) {
-                selectSubtitleTrack(preferredId)
+        val userTurnedSubtitlesOn = !subtitleId.isNullOrBlank() && subtitleId != SUBTITLE_OFF_ID
+        if (!hasAppliedSubtitleLanguagePref) {
+            if (!userTurnedSubtitlesOn) {
+                selectSubtitleTrack(SUBTITLE_OFF_ID)
                 hasAppliedSubtitleLanguagePref = true
+                return
+            }
+            val forcedSubtitleLanguages = forcedSubtitleLanguages()
+            if (forcedSubtitleLanguages.isNotEmpty()) {
+                val subtitleOptions = _subtitleTracks.value.filter { it.id != SUBTITLE_OFF_ID }
+                val forcedSubtitleId = resolveForcedTrack(
+                    subtitleOptions, forcedSubtitleLanguages, subtitleId
+                ) { tracks, language -> findSubtitleTrackByLanguage(tracks, language) }
+                val forcedSubtitleMissing = _audioTracks.value.isNotEmpty() &&
+                    forcedSubtitleLanguages.none { findSubtitleTrackByLanguage(subtitleOptions, it) != null }
+                if (forcedSubtitleId != null) {
+                    selectSubtitleTrack(forcedSubtitleId)
+                    hasAppliedSubtitleLanguagePref = true
+                    return
+                }
+                if (forcedSubtitleMissing) {
+                    selectSubtitleTrack(SUBTITLE_OFF_ID)
+                    // Off only for this source: the user still wants subtitles next time.
+                    _uiState.update { it.copy(subtitleChoiceToRemember = subtitleId) }
+                    hasAppliedSubtitleLanguagePref = true
+                    return
+                }
             }
         }
+        if (userTurnedSubtitlesOn) selectSubtitleTrack(subtitleId)
     }
 
     private fun forcedAudioLanguages(): List<String> = forcedLanguages(
@@ -2069,32 +2078,6 @@ class ExoPlayerBackend(
         // actually tagged as English. Leaves untagged sources untouched.
         if (primary.isEmpty() && secondary.isEmpty()) {
             findTrackByLanguage(options, "en")?.let { return it.id }
-        }
-        return null
-    }
-
-    private fun resolvePreferredSubtitleTrack(): String? {
-        val primary = playbackSettings.preferredSubtitleLanguage.trim()
-        val secondary = playbackSettings.preferredSubtitleLanguageSecondary.trim()
-
-        if (primary == "#off") return SUBTITLE_OFF_ID
-        if (primary.isEmpty() && secondary == "#off") return SUBTITLE_OFF_ID
-
-        val options = _subtitleTracks.value.filter { it.id != SUBTITLE_OFF_ID }
-
-        if (primary.isNotEmpty()) {
-            val match = findSubtitleTrackByLanguage(options, primary)
-            if (match != null) return match.id
-        }
-        if (secondary.isNotEmpty()) {
-            if (secondary == "#off") return SUBTITLE_OFF_ID
-            val match = findSubtitleTrackByLanguage(options, secondary)
-            if (match != null) return match.id
-        }
-        // No language configured ("Default") — same aggressive English fallback as
-        // audio, so closed captions come on automatically when an English track exists.
-        if (primary.isEmpty() && secondary.isEmpty()) {
-            findSubtitleTrackByLanguage(options, "en")?.let { return it.id }
         }
         return null
     }

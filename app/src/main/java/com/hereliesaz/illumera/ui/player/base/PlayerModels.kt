@@ -109,6 +109,8 @@ data class PlayerUiState(
     val currentSourceId: String? = null,
     val selectedAudioTrackId: String? = null,
     val selectedSubtitleTrackId: String? = null,
+    /** User's subtitle pick to remember when the shown one is an automatic "None". */
+    val subtitleChoiceToRemember: String? = null,
     val resizeMode: Int = 0,
     val subtitleVerticalOffsetPercent: Int = 0,
     val subtitleSizePercent: Int = 100,
