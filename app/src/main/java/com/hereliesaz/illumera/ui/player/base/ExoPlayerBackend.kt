@@ -1964,8 +1964,16 @@ class ExoPlayerBackend(
     }
 
     private fun applyPendingTrackSelections() {
+        // A forced language wins over a remembered track in another language: a source
+        // chosen because it carries that language must actually play it.
+        val forcedAudioId = resolveForcedTrack(
+            _audioTracks.value, forcedAudioLanguages(), pendingAudioTrackId
+        ) { tracks, language -> findTrackByLanguage(tracks, language) }
         val audioId = pendingAudioTrackId
-        if (!audioId.isNullOrBlank()) {
+        if (forcedAudioId != null && !hasAppliedAudioLanguagePref) {
+            selectAudioTrack(forcedAudioId)
+            hasAppliedAudioLanguagePref = true
+        } else if (!audioId.isNullOrBlank()) {
             selectAudioTrack(audioId)
         } else if (!hasAppliedAudioLanguagePref) {
             val preferredId = resolvePreferredAudioTrack()
@@ -1975,8 +1983,16 @@ class ExoPlayerBackend(
             }
         }
 
+        val forcedSubtitleId = resolveForcedTrack(
+            _subtitleTracks.value.filter { it.id != SUBTITLE_OFF_ID },
+            forcedSubtitleLanguages(),
+            pendingSubtitleTrackId
+        ) { tracks, language -> findSubtitleTrackByLanguage(tracks, language) }
         val subtitleId = pendingSubtitleTrackId
-        if (!subtitleId.isNullOrBlank()) {
+        if (forcedSubtitleId != null && !hasAppliedSubtitleLanguagePref) {
+            selectSubtitleTrack(forcedSubtitleId)
+            hasAppliedSubtitleLanguagePref = true
+        } else if (!subtitleId.isNullOrBlank()) {
             selectSubtitleTrack(subtitleId)
         } else if (!hasAppliedSubtitleLanguagePref) {
             val preferredId = resolvePreferredSubtitleTrack()
@@ -1985,6 +2001,43 @@ class ExoPlayerBackend(
                 hasAppliedSubtitleLanguagePref = true
             }
         }
+    }
+
+    private fun forcedAudioLanguages(): List<String> = forcedLanguages(
+        playbackSettings.sourceAudioLanguageRequirement,
+        playbackSettings.preferredAudioLanguage,
+        playbackSettings.preferredAudioLanguageSecondary
+    )
+
+    private fun forcedSubtitleLanguages(): List<String> = forcedLanguages(
+        playbackSettings.sourceSubtitleLanguageRequirement,
+        playbackSettings.preferredSubtitleLanguage,
+        playbackSettings.preferredSubtitleLanguageSecondary
+    )
+
+    private fun forcedLanguages(mode: String, primary: String, secondary: String): List<String> =
+        when (mode) {
+            "primary" -> listOf(primary)
+            "primary_or_secondary" -> listOf(primary, secondary)
+            else -> emptyList()
+        }.map { it.trim() }.filter { it.isNotEmpty() && it != "#off" }.distinct()
+
+    /**
+     * The track to select for a forced language, or null when nothing is forced, the
+     * source has no such track (a non-matching fallback source), or the remembered track
+     * is already in a forced language.
+     */
+    private fun resolveForcedTrack(
+        tracks: List<PlayerTrackOption>,
+        languages: List<String>,
+        rememberedId: String?,
+        find: (List<PlayerTrackOption>, String) -> PlayerTrackOption?
+    ): String? {
+        if (languages.isEmpty() || tracks.isEmpty()) return null
+        val forcedKeys = languages.map { normalizeLanguageToIso2(it) }.toSet()
+        val remembered = rememberedId?.let { id -> tracks.firstOrNull { it.id == id } }
+        if (remembered != null && normalizeLanguageToIso2(remembered.language) in forcedKeys) return null
+        return languages.firstNotNullOfOrNull { find(tracks, it) }?.id
     }
 
     private fun resolvePreferredAudioTrack(): String? {

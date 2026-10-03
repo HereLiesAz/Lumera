@@ -1220,6 +1220,8 @@ class MainActivity : ComponentActivity() {
                                     preferredAudioLanguageSecondary = currentProfile?.preferredAudioLanguageSecondary ?: "",
                                     preferredSubtitleLanguage = currentProfile?.preferredSubtitleLanguage ?: "",
                                     preferredSubtitleLanguageSecondary = currentProfile?.preferredSubtitleLanguageSecondary ?: "",
+                                    sourceAudioLanguageRequirement = currentProfile?.sourceAudioLanguageRequirement ?: "off",
+                                    sourceSubtitleLanguageRequirement = currentProfile?.sourceSubtitleLanguageRequirement ?: "off",
                                     subtitleSize = currentProfile?.subtitleSize ?: 100,
                                     subtitleOffset = currentProfile?.subtitleOffset ?: 0,
                                     subtitleTextColor = currentProfile?.subtitleTextColor?.toInt() ?: 0xFFFFFFFF.toInt(),

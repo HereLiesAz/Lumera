@@ -1845,7 +1845,7 @@ fun SourcePreferencesSettings(
                 color = Color.White
             )
             Text(
-                "Uses the primary and secondary languages selected under Playback. Forced sources must advertise the required language.",
+                "Uses the primary and secondary languages selected under Playback. Sources advertising the forced language are tried first and play in it; others are tried last.",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
                 color = Color.White.copy(0.6f),
                 modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)

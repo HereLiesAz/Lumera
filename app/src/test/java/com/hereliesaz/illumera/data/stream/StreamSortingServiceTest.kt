@@ -57,7 +57,7 @@ class StreamSortingServiceTest {
     }
 
     @Test
-    fun forcedPrimaryAudio_acceptsAuthoritativeLanguageAndRejectsMismatch() {
+    fun forcedPrimaryAudio_acceptsAuthoritativeLanguageAndRanksMismatchLast() {
         val streams = listOf(
             Stream(
                 title = "1080p release",
@@ -80,7 +80,7 @@ class StreamSortingServiceTest {
             )
         )
 
-        assertEquals(listOf("english"), result.mapNotNull { it.url })
+        assertEquals(listOf("english", "spanish"), result.mapNotNull { it.url })
     }
 
     @Test
@@ -99,7 +99,7 @@ class StreamSortingServiceTest {
             )
         )
 
-        assertEquals(listOf("audio-tagged"), result.mapNotNull { it.url })
+        assertEquals(listOf("audio-tagged", "title-only"), result.mapNotNull { it.url })
     }
 
     @Test
@@ -124,7 +124,7 @@ class StreamSortingServiceTest {
             )
         )
 
-        assertEquals(listOf("english"), result.mapNotNull { it.url })
+        assertEquals(listOf("english", "german"), result.mapNotNull { it.url })
     }
 
     @Test
@@ -145,7 +145,8 @@ class StreamSortingServiceTest {
             )
         )
 
-        assertEquals(setOf("english", "spanish"), result.mapNotNull { it.url }.toSet())
+        assertEquals(setOf("english", "spanish"), result.take(2).mapNotNull { it.url }.toSet())
+        assertEquals("french", result.last().url)
     }
 
     @Test
@@ -172,7 +173,7 @@ class StreamSortingServiceTest {
             )
         )
 
-        assertEquals(listOf("spanish-subs"), result.mapNotNull { it.url })
+        assertEquals(listOf("spanish-subs", "english-subs"), result.mapNotNull { it.url })
     }
 
     @Test
@@ -203,7 +204,7 @@ class StreamSortingServiceTest {
             )
         )
 
-        assertEquals(listOf("norwegian"), result.mapNotNull { it.url })
+        assertEquals(listOf("norwegian", "title-word"), result.mapNotNull { it.url })
     }
 
     @Test
@@ -252,8 +253,8 @@ class StreamSortingServiceTest {
             )
         )
 
-        assertEquals(listOf("english"), english.mapNotNull { it.url })
-        assertEquals(listOf("brazilian"), brazilian.mapNotNull { it.url })
+        assertEquals(listOf("english", "brazilian"), english.mapNotNull { it.url })
+        assertEquals(listOf("brazilian", "english"), brazilian.mapNotNull { it.url })
     }
     @Test
     fun secondarySeedSortBreaksPrimaryQualityTies() {

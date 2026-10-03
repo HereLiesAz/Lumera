@@ -45,8 +45,6 @@ class StreamSortingService @Inject constructor() {
                 lowerPhrases.none { phrase -> text.contains(phrase) }
             }
             .filter { (_, info) -> !skipSeedless || info.seeds != 0 }
-            .filter { (stream, _) -> matchesAudioLanguageRequirement(stream, profile) }
-            .filter { (stream, _) -> matchesSubtitleLanguageRequirement(stream, profile) }
             .filter { (_, info) ->
                 if (maxSizeGb <= 0) return@filter true
                 val sizeBytes = info.sizeBytes ?: return@filter true
@@ -58,7 +56,9 @@ class StreamSortingService @Inject constructor() {
             }
             .map { (stream, _) -> stream }
             .sortedWith(
-                languagePreferenceComparator(profile).then(buildComparator(
+                forcedLanguageComparator(profile)
+                    .then(languagePreferenceComparator(profile))
+                    .then(buildComparator(
                     addonSortOrders = addonSortOrders,
                     sortBy = sortBy,
                     secondarySortBy = profile?.sourceSortSecondary,
@@ -70,7 +70,21 @@ class StreamSortingService @Inject constructor() {
     }
 
     /**
-     * Preferred languages rank sources; they never remove any (the Force settings do that).
+     * Force settings never remove sources: sources that fail a forced audio or subtitle
+     * language sink below every source that satisfies it, so they are tried last.
+     */
+    private fun forcedLanguageComparator(profile: ProfileEntity?): Comparator<Stream> {
+        val misses = java.util.IdentityHashMap<Stream, Int>()
+        return compareBy { stream ->
+            misses.getOrPut(stream) {
+                (if (matchesAudioLanguageRequirement(stream, profile)) 0 else 1) +
+                    (if (matchesSubtitleLanguageRequirement(stream, profile)) 0 else 1)
+            }
+        }
+    }
+
+    /**
+     * Preferred languages rank sources below the Force ordering; they never remove any.
      * Sources declaring the primary audio language come first, then the secondary; within
      * those, the primary then secondary subtitle language. Undeclared sources keep their
      * place after them, ordered by the rest of the ranking.
