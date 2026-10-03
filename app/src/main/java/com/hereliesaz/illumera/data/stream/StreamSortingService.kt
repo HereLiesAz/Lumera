@@ -70,15 +70,15 @@ class StreamSortingService @Inject constructor() {
     }
 
     /**
-     * Force settings never remove sources: sources that fail a forced audio or subtitle
-     * language sink below every source that satisfies it, so they are tried last.
+     * Forced audio never removes sources: sources that fail it sink below every source
+     * that satisfies it, so they are tried last. Forced subtitles don't rank sources at
+     * all; the player applies them (see ExoPlayerBackend.applyPendingTrackSelections).
      */
     private fun forcedLanguageComparator(profile: ProfileEntity?): Comparator<Stream> {
         val misses = java.util.IdentityHashMap<Stream, Int>()
         return compareBy { stream ->
             misses.getOrPut(stream) {
-                (if (matchesAudioLanguageRequirement(stream, profile)) 0 else 1) +
-                    (if (matchesSubtitleLanguageRequirement(stream, profile)) 0 else 1)
+                if (matchesAudioLanguageRequirement(stream, profile)) 0 else 1
             }
         }
     }
@@ -149,15 +149,6 @@ class StreamSortingService @Inject constructor() {
             authoritativeFields.any { field -> containsAuthoritativeAudioLanguage(field, language) } ||
                 containsAudioLanguage(contextualText, language)
         }
-    }
-
-    private fun matchesSubtitleLanguageRequirement(stream: Stream, profile: ProfileEntity?): Boolean {
-        val languages = requiredLanguages(
-            mode = profile?.sourceSubtitleLanguageRequirement.orEmpty(),
-            primary = profile?.preferredSubtitleLanguage.orEmpty(),
-            secondary = profile?.preferredSubtitleLanguageSecondary.orEmpty()
-        )
-        return languages.isEmpty() || matchesSubtitleLanguage(stream, languages)
     }
 
     private fun matchesSubtitleLanguage(stream: Stream, languages: List<String>): Boolean {

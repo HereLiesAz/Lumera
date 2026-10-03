@@ -1983,14 +1983,23 @@ class ExoPlayerBackend(
             }
         }
 
+        // Forced subtitles: the required language is the default track; a source without
+        // it starts with subtitles off. Waits for the track list (audio present) so a
+        // not-yet-parsed source isn't mistaken for one without the language.
+        val forcedSubtitleLanguages = forcedSubtitleLanguages()
+        val subtitleOptions = _subtitleTracks.value.filter { it.id != SUBTITLE_OFF_ID }
         val forcedSubtitleId = resolveForcedTrack(
-            _subtitleTracks.value.filter { it.id != SUBTITLE_OFF_ID },
-            forcedSubtitleLanguages(),
-            pendingSubtitleTrackId
+            subtitleOptions, forcedSubtitleLanguages, pendingSubtitleTrackId
         ) { tracks, language -> findSubtitleTrackByLanguage(tracks, language) }
+        val forcedSubtitleMissing = forcedSubtitleLanguages.isNotEmpty() &&
+            _audioTracks.value.isNotEmpty() &&
+            forcedSubtitleLanguages.none { findSubtitleTrackByLanguage(subtitleOptions, it) != null }
         val subtitleId = pendingSubtitleTrackId
         if (forcedSubtitleId != null && !hasAppliedSubtitleLanguagePref) {
             selectSubtitleTrack(forcedSubtitleId)
+            hasAppliedSubtitleLanguagePref = true
+        } else if (forcedSubtitleMissing && !hasAppliedSubtitleLanguagePref) {
+            selectSubtitleTrack(SUBTITLE_OFF_ID)
             hasAppliedSubtitleLanguagePref = true
         } else if (!subtitleId.isNullOrBlank()) {
             selectSubtitleTrack(subtitleId)
