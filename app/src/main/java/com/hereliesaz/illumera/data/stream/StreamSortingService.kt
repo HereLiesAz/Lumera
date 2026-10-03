@@ -189,7 +189,7 @@ class StreamSortingService @Inject constructor() {
 
         return aliases.any { alias ->
             languageMatches(text, alias).any { match ->
-                val audioDistance = nearestCueDistance(text, match.range, AUDIO_CUE_REGEX)
+                val audioDistance = nearestCueDistance(text, match.range, AUDIO_CUE_REGEX, requireLinked = true)
                 val subtitleDistance = nearestCueDistance(text, match.range, SUBTITLE_CUE_REGEX)
                 when {
                     audioDistance != null && (subtitleDistance == null || audioDistance <= subtitleDistance) -> true
@@ -247,7 +247,18 @@ class StreamSortingService @Inject constructor() {
             Regex("(?i)(?<![\\p{L}\\p{N}])${Regex.escape(alias)}(?![\\p{L}\\p{N}])")
         }.findAll(text)
 
-    private fun nearestCueDistance(text: String, languageRange: IntRange, cueRegex: Regex): Int? {
+    /**
+     * Distance from a language word to the nearest cue within [radius]. With [requireLinked],
+     * a cue only counts when nothing but numbers, joiners or other language names stands
+     * between them: "German Dubbed" and "English, Spanish Audio" link, but the title word in
+     * "The English Patient 1996 German Dubbed" does not ("Patient" breaks the link).
+     */
+    private fun nearestCueDistance(
+        text: String,
+        languageRange: IntRange,
+        cueRegex: Regex,
+        requireLinked: Boolean = false
+    ): Int? {
         val radius = 32
         val start = (languageRange.first - radius).coerceAtLeast(0)
         val endExclusive = (languageRange.last + radius + 1).coerceAtMost(text.length)
@@ -255,12 +266,30 @@ class StreamSortingService @Inject constructor() {
         val languageCenter = (languageRange.first + languageRange.last) / 2
 
         return cueRegex.findAll(text.substring(start, endExclusive))
+            .filter { match ->
+                if (!requireLinked) return@filter true
+                val cueFirst = start + match.range.first
+                val cueLast = start + match.range.last
+                val between = if (cueFirst > languageRange.last) {
+                    text.substring(languageRange.last + 1, cueFirst)
+                } else {
+                    text.substring(cueLast + 1, languageRange.first.coerceAtLeast(cueLast + 1))
+                }
+                isLinkingGap(between)
+            }
             .map { match ->
                 val cueCenter = start + (match.range.first + match.range.last) / 2
                 abs(cueCenter - languageCenter)
             }
             .minOrNull()
     }
+
+    private fun isLinkingGap(between: String): Boolean =
+        between.split(GAP_SPLIT_REGEX).filter { it.isNotEmpty() }.all { word ->
+            word.any(Char::isDigit) || word.lowercase(Locale.ROOT) in LINKING_WORDS || isLanguageWord(word)
+        }
+
+    private fun isLanguageWord(word: String): Boolean = word.lowercase(Locale.ROOT) in KNOWN_LANGUAGE_WORDS
 
     private fun buildComparator(
         addonSortOrders: Map<String, Int>,
@@ -380,6 +409,20 @@ class StreamSortingService @Inject constructor() {
             "tl" to listOf("🇵🇭"),
             "fa" to listOf("🇮🇷"),
         )
+
+        private val GAP_SPLIT_REGEX = Regex("[^\\p{L}\\p{N}]+")
+        private val LINKING_WORDS = setOf("and", "or", "&", "+", "track", "tracks", "multi")
+
+        /** Every language name/code the app knows, for telling a list of languages from title words. */
+        private val KNOWN_LANGUAGE_WORDS: Set<String> by lazy {
+            buildSet {
+                LANGUAGE_ALIASES.values.forEach { addAll(it) }
+                Locale.getISOLanguages().forEach { code ->
+                    Locale.forLanguageTag(code).getDisplayLanguage(Locale.ENGLISH)
+                        .lowercase(Locale.ROOT).takeIf { it.isNotBlank() && it != code }?.let(::add)
+                }
+            }
+        }
 
         private val LANGUAGE_ALIASES = mapOf(
             "en" to setOf("english", "eng"),
