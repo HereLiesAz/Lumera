@@ -368,5 +368,19 @@ internal fun isSameFile(stream: Stream, watched: Stream?, watchedUrl: String?): 
     val name = stream.behaviorHints?.filename
     val watchedName = watched.behaviorHints?.filename
     if (!name.isNullOrBlank() && !watchedName.isNullOrBlank()) return name == watchedName
+    // A season pack without file hints: different episode tags mean different files.
+    val episode = episodeTag(stream)
+    val watchedEpisode = episodeTag(watched)
+    if (episode != null && watchedEpisode != null) return episode == watchedEpisode
     return true
 }
+
+private val EPISODE_TAG = Regex("""(?i)\bS(\d{1,2})[ ._-]?E(\d{1,3})\b""")
+
+/** "S01E04"-style tag from a stream's file name or titles, normalized to season to episode. */
+private fun episodeTag(stream: Stream): Pair<Int, Int>? =
+    sequenceOf(stream.behaviorHints?.filename, stream.title, stream.name, stream.description)
+        .filterNotNull()
+        .firstNotNullOfOrNull { text ->
+            EPISODE_TAG.find(text)?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
+        }

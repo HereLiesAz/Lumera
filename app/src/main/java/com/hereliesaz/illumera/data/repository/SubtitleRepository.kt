@@ -16,6 +16,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.net.URI
 import java.net.URLEncoder
 import java.util.Locale
@@ -32,6 +33,7 @@ class SubtitleRepository @Inject constructor(
     companion object {
         private const val MANIFEST_TIMEOUT_MS = 6_000L
         private const val PER_ADDON_TIMEOUT_MS = 8_000L
+        private const val ADDON_TOTAL_TIMEOUT_MS = 10_000L
     }
 
     private data class SubtitleResourceRule(
@@ -79,15 +81,19 @@ class SubtitleRepository @Inject constructor(
                 if (!shouldQueryAddonForSubtitles(addon, request.contentType, request.baseId)) {
                     return@async emptyList()
                 }
-                fetchSubtitlesFromAddon(
-                    addon = addon,
-                    request = request,
-                    videoHash = videoHash,
-                    videoSize = videoSize,
-                    filename = filename,
-                    preferredAddonBaseUrl = preferredAddonBaseUrl,
-                    preferredAddonRequestId = preferredAddonRequestId
-                )
+                // One addon's capability check plus request, however many round-trips,
+                // never holds up playback past this: a slow addon simply contributes none.
+                withTimeoutOrNull(ADDON_TOTAL_TIMEOUT_MS) {
+                    fetchSubtitlesFromAddon(
+                        addon = addon,
+                        request = request,
+                        videoHash = videoHash,
+                        videoSize = videoSize,
+                        filename = filename,
+                        preferredAddonBaseUrl = preferredAddonBaseUrl,
+                        preferredAddonRequestId = preferredAddonRequestId
+                    )
+                }.orEmpty()
             }
         }
 

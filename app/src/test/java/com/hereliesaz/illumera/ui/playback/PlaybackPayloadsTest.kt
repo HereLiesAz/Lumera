@@ -188,4 +188,12 @@ class PlaybackPayloadsTest {
         assertTrue(isSameFile(named("S01E07.mkv"), named("S01E07.mkv"), null))
         assertTrue(isSameFile(named(null), named(null), null))
     }
+
+    @Test
+    fun `a season pack without file hints is told apart by episode tag`() {
+        fun titled(title: String) = Stream(infoHash = "abc123", title = title)
+        assertFalse(isSameFile(titled("Show S01E04 2160p"), titled("Show S01E03 2160p"), null))
+        assertTrue(isSameFile(titled("Show S01E03 2160p"), titled("Show.s01.e03.mkv"), null))
+        assertTrue(isSameFile(titled("Show Season 1 pack"), titled("Show S01E03"), null))
+    }
 }
