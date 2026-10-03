@@ -98,6 +98,14 @@ fun PlayerScreen(
         }
     }
 
+    // Subtitles found after playback started (stream-specific matches fetched in the
+    // background) join the running player instead of holding the stream back.
+    LaunchedEffect(playbackController, videoUrl, subtitles) {
+        if (videoUrl.isNotBlank()) {
+            (playbackController as? ExoPlayerBackend)?.addExternalSubtitles(subtitles, forMediaUrl = videoUrl)
+        }
+    }
+
     // Pre-create ExoPlayer + OkHttpClient while torrent pieces are still downloading.
     // By the time the URL arrives, the player is ready — prepareSource() just calls prepare().
     LaunchedEffect(playbackController, videoUrl) {

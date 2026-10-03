@@ -847,12 +847,9 @@ class DetailsViewModel @Inject constructor(
                 sidebarState = SidebarState.Closed,
                 activeStreamRequestId = streamRequestId
             )
-            val resolvedSubtitles = subtitleRepository.getSubtitlesForStream(
-                type = mediaType,
-                playbackId = streamRequestId,
-                stream = preferredStream,
-                fallback = addonSubtitles
-            )
+            // Playback starts with the generic subtitles; the player session fetches matches
+            // for this exact file in the background, so the stream never waits on them.
+            val resolvedSubtitles = addonSubtitles
             _state.value = _state.value.copy(
                 isLoadingStreams = false,
                 sidebarState = SidebarState.Closed,
@@ -879,12 +876,9 @@ class DetailsViewModel @Inject constructor(
                     sidebarState = SidebarState.Closed,
                     activeStreamRequestId = streamRequestId
                 )
-                val resolvedSubtitles = subtitleRepository.getSubtitlesForStream(
-                    type = mediaType,
-                    playbackId = streamRequestId,
-                    stream = firstPlayable,
-                    fallback = addonSubtitles
-                )
+                // Playback starts with the generic subtitles; the player session fetches matches
+                // for this exact file in the background, so the stream never waits on them.
+                val resolvedSubtitles = addonSubtitles
                 _state.value = _state.value.copy(
                     isLoadingStreams = false,
                     sidebarState = SidebarState.Closed,
@@ -1142,12 +1136,8 @@ class DetailsViewModel @Inject constructor(
                 sidebarState = SidebarState.Closed
             )
 
-            val resolvedSubtitles = subtitleRepository.getSubtitlesForStream(
-                type = mediaType,
-                playbackId = requestId,
-                stream = stream,
-                fallback = fallbackSubtitles
-            )
+            // File-specific subtitles are fetched by the player session once playback starts.
+            val resolvedSubtitles = fallbackSubtitles
 
             _state.value = _state.value.copy(
                 isLoadingStreams = false,
