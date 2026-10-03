@@ -507,6 +507,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (::playStoreUpdateManager.isInitialized && BuildConfig.USE_PLAY_UPDATES) {
             playStoreUpdateManager.resumeInterruptedUpdate(playUpdateLauncher)
+            // A long-lived session (TV) still hears about a release published since launch.
+            playStoreUpdateManager.checkForUpdate(force = false)
         }
     }
 
@@ -736,7 +738,8 @@ class MainActivity : ComponentActivity() {
             val updateState by appUpdateManager.state.collectAsState()
             val playUpdateState by playStoreUpdateManager.state.collectAsState()
             var updateDismissed by rememberSaveable { mutableStateOf(false) }
-            var playUpdateDismissed by rememberSaveable { mutableStateOf(false) }
+            // "Later" hides the prompt for that version only; a newer release asks again.
+            var playUpdateDismissedFor by rememberSaveable { mutableStateOf<Int?>(null) }
             val updateScope = rememberCoroutineScope()
             LaunchedEffect(Unit) {
                 when {
@@ -1386,12 +1389,12 @@ class MainActivity : ComponentActivity() {
 
                     // Play Store builds still notify in-app, but Google Play owns
                     // the actual download/install UX.
-                    if (BuildConfig.USE_PLAY_UPDATES && _splashFinished.value && !playUpdateDismissed) {
-                        when (playUpdateState) {
-                            is PlayStoreUpdateState.UpdateAvailable -> {
+                    if (BuildConfig.USE_PLAY_UPDATES && _splashFinished.value) {
+                        when (val playState = playUpdateState) {
+                            is PlayStoreUpdateState.UpdateAvailable -> if (playUpdateDismissedFor != playState.versionCode) {
                                 PlayStoreUpdateAvailableDialog(
                                     onUpdate = { playStoreUpdateManager.startUpdate(playUpdateLauncher) },
-                                    onDismiss = { playUpdateDismissed = true }
+                                    onDismiss = { playUpdateDismissedFor = playState.versionCode }
                                 )
                             }
                             else -> Unit
