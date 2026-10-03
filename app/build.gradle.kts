@@ -35,10 +35,22 @@ val traktClientSecret = localOrEnv("TRAKT_CLIENT_SECRET", "TRAKT_CLIENT_SECRET")
 
 fun releaseSigningProp(propKey: String, envKey: String): String = localOrEnv(propKey, envKey)
 
-val releaseStoreFile = releaseSigningProp("release.storeFile", "RELEASE_STORE_FILE")
-val releaseStorePassword = releaseSigningProp("release.storePassword", "RELEASE_STORE_PASSWORD")
-val releaseKeyAlias = releaseSigningProp("release.keyAlias", "RELEASE_KEY_ALIAS")
-val releaseKeyPassword = releaseSigningProp("release.keyPassword", "RELEASE_KEY_PASSWORD")
+// Signing arrives from HereLiesAz/workflows android-release as the four standard variables.
+val releaseStoreFile = releaseSigningProp("release.storeFile", "KEYSTORE_FILE")
+val releaseStorePassword = releaseSigningProp("release.storePassword", "KEYSTORE_PASSWORD")
+val releaseKeyAlias = releaseSigningProp("release.keyAlias", "KEY_ALIAS")
+val releaseKeyPassword = releaseSigningProp("release.keyPassword", "KEY_PASSWORD")
+// Release versions come from HereLiesAz/workflows android-release as -PversionCode/-PversionName
+// (Play's highest code + 1). Local builds fall back to the last published pair in version.properties.
+val versionProperties = Properties().apply {
+    val file = rootProject.file("version.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val appVersionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull()
+    ?: versionProperties.getProperty("versionCode")?.trim()?.toIntOrNull() ?: 1
+val appVersionName = (project.findProperty("versionName") as String?)
+    ?: versionProperties.getProperty("versionName")?.trim() ?: "0.0.0.0"
+
 val hasReleaseKeystore = releaseStoreFile.isNotBlank() &&
     releaseStorePassword.isNotBlank() &&
     releaseKeyAlias.isNotBlank() &&
@@ -53,8 +65,8 @@ android {
         applicationId = "com.hereliesaz.illumera"
         minSdk = 26
         targetSdk = 37
-        versionCode = (project.findProperty("versionCodeOverride") as String?)?.toIntOrNull() ?: 12
-        versionName = (project.findProperty("versionNameOverride") as String?) ?: "0.6.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         buildConfigField("String", "GITHUB_OWNER", buildConfigString("HereLiesAz"))
         buildConfigField("String", "GITHUB_REPO", buildConfigString("illumera"))
@@ -176,7 +188,7 @@ gradle.taskGraph.whenReady(Action<org.gradle.api.execution.TaskExecutionGraph> {
         throw GradleException(
             "Release signing credentials are required. Configure release.storeFile, " +
                 "release.storePassword, release.keyAlias, and release.keyPassword " +
-                "(or the matching RELEASE_* environment variables)."
+                "(or KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD)."
         )
     }
 })
