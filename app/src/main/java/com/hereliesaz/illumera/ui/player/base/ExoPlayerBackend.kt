@@ -1,3 +1,7 @@
+// The whole backend is built on Media3's unstable player APIs (renderers, media sources,
+// load-error policies); opt in once here rather than per call site.
+@file:androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+
 package com.hereliesaz.illumera.ui.player.base
 
 import android.app.Activity
