@@ -282,12 +282,12 @@ class StremioLibrarySyncManager @Inject constructor(
         }
     }
 
-    private fun isAfter(candidate: String, baseline: String): Boolean {
-        // Unknown timestamps are treated conservatively as remote-newer so an
-        // unparseable value can never authorize a destructive inferred tombstone.
-        val candidateInstant = runCatching { Instant.parse(candidate) }.getOrNull() ?: return true
-        val baselineInstant = runCatching { Instant.parse(baseline) }.getOrNull() ?: return true
-        return candidateInstant.isAfter(baselineInstant)
+    /** [candidateMs] is a datastoreMeta epoch-millis mtime; [baseline] an ISO-8601 item mtime. */
+    private fun isAfter(candidateMs: Long, baseline: String): Boolean {
+        // An unparseable baseline is treated conservatively as remote-newer so it can
+        // never authorize a destructive inferred tombstone.
+        val baselineMs = runCatching { Instant.parse(baseline).toEpochMilli() }.getOrNull() ?: return true
+        return candidateMs > baselineMs
     }
 
     private fun parseSeriesId(id: String): String? {
