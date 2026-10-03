@@ -1,5 +1,6 @@
 package com.hereliesaz.illumera.ui.home
 
+import com.hereliesaz.illumera.ui.utils.backdropDecodeSize
 import com.hereliesaz.illumera.ui.navigation.focus.FocusMemory
 import com.hereliesaz.illumera.ui.navigation.focus.LocalFocusMemory
 import com.hereliesaz.illumera.ui.navigation.focus.RestoreFocusOnResume
@@ -1360,7 +1361,7 @@ fun CinematicBackground(item: MetaItem?) {
                         ImageRequest.Builder(context)
                             .data(image)
                             .crossfade(false)
-                            .size(1920, 1080)
+                            .size(backdropDecodeSize(context))
                             .build()
                     }
 

@@ -1,7 +1,7 @@
-prefix=/home/lenovo/assrender-build/prebuilt/armeabi-v7a
+prefix=/home/user/illumera/assrender/prebuilt/armeabi-v7a
 exec_prefix=${prefix}
-libdir=/home/lenovo/assrender-build/prebuilt/armeabi-v7a/lib
-includedir=/home/lenovo/assrender-build/prebuilt/armeabi-v7a/include
+libdir=/home/user/illumera/assrender/prebuilt/armeabi-v7a/lib
+includedir=/home/user/illumera/assrender/prebuilt/armeabi-v7a/include
 
 Name: libavcodec
 Description: FFmpeg codec library

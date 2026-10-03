@@ -86,6 +86,8 @@ build_arch() {
     mkdir -p "$PREFIX"
 
     export CC="${TOOLCHAIN}/bin/${TARGET}${API_LEVEL}-clang"
+    # Android 15+ devices with 16 KB pages require 16 KB-aligned ELF segments (Play requirement).
+    export LDFLAGS="-Wl,-z,max-page-size=16384"
     export CXX="${TOOLCHAIN}/bin/${TARGET}${API_LEVEL}-clang++"
     export AR="${TOOLCHAIN}/bin/llvm-ar"
     export RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
@@ -115,6 +117,7 @@ build_arch() {
         --with-bzip2=no \
         --with-png=no \
         --with-harfbuzz=no \
+        --with-brotli=no \
         CFLAGS="-fPIC -Os"
     make -j$(nproc 2>/dev/null || echo 4)
     make install
@@ -150,6 +153,7 @@ build_arch() {
     mkdir -p build-$ARCH && cd build-$ARCH
     cmake .. \
         -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+        -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
         -DANDROID_ABI=$ANDROID_ABI \
         -DANDROID_PLATFORM=android-$API_LEVEL \
         -DCMAKE_INSTALL_PREFIX="$PREFIX" \
@@ -187,7 +191,7 @@ build_arch() {
         --disable-fontconfig \
         --disable-require-system-font-provider \
         CFLAGS="-fPIC -Os -I$PREFIX/include -I$PREFIX/include/freetype2" \
-        LDFLAGS="-L$PREFIX/lib" \
+        LDFLAGS="-Wl,-z,max-page-size=16384 -L$PREFIX/lib" \
         FREETYPE_CFLAGS="-I$PREFIX/include/freetype2" \
         FREETYPE_LIBS="-L$PREFIX/lib -lfreetype" \
         FRIBIDI_CFLAGS="-I$PREFIX/include/fribidi" \

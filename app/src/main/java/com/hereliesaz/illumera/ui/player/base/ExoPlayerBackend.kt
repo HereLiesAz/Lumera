@@ -74,6 +74,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -138,6 +139,10 @@ class ExoPlayerBackend(
     private val scope = CoroutineScope(scopeJob + Dispatchers.Main)
 
     private val _uiState = MutableStateFlow(PlayerUiState())
+
+    // Decoded video dimensions (pixel-aspect corrected), used to shape the PiP window.
+    private val _videoSize = MutableStateFlow(0 to 0)
+    val videoSize: StateFlow<Pair<Int, Int>> = _videoSize.asStateFlow()
     override val uiState: StateFlow<PlayerUiState> = _uiState
 
     private val _sourceOptions = MutableStateFlow<List<PlayerSourceOption>>(emptyList())
@@ -364,6 +369,12 @@ class ExoPlayerBackend(
             _uiState.update { it.copy(playWhenReady = playWhenReady) }
             updateProgressLoopState()
             updateProgressState()
+        }
+
+        override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+            if (videoSize.width > 0 && videoSize.height > 0) {
+                _videoSize.value = (videoSize.width * videoSize.pixelWidthHeightRatio).toInt() to videoSize.height
+            }
         }
 
         override fun onRenderedFirstFrame() {

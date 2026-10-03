@@ -1,4 +1,4 @@
-prefix=/home/lenovo/assrender-build/prebuilt/armeabi-v7a
+prefix=/home/user/illumera/assrender/prebuilt/armeabi-v7a
 exec_prefix=${prefix}
 libdir=${exec_prefix}/lib
 includedir=${prefix}/include
