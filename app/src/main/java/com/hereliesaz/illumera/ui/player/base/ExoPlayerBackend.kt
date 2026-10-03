@@ -1384,7 +1384,13 @@ class ExoPlayerBackend(
         // Never forward stream cookies/auth headers to unrelated subtitle hosts.
         val subtitleFactory = createHttpDataSourceFactory(isLocalhost = false)
         val subtitleSources = subtitleConfigs.map { config ->
+            // A slow or broken subtitle host must never stall or fail the video: one retry,
+            // then the track just ends.
             SingleSampleMediaSource.Factory(subtitleFactory)
+                .setTreatLoadErrorsAsEndOfStream(true)
+                .setLoadErrorHandlingPolicy(
+                    androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(1)
+                )
                 .createMediaSource(config, C.TIME_UNSET)
         }
         return MergingMediaSource(mainSource, *subtitleSources.toTypedArray())

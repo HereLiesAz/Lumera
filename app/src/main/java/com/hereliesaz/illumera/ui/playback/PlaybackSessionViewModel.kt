@@ -38,6 +38,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Provider
@@ -48,6 +49,8 @@ import kotlin.reflect.KProperty
 internal val SERIES_PLAYBACK_TYPES = setOf("series", "tv", "anime", "episode")
 // A next-episode hand-off that hasn't started playback by then is reported and falls back to the source list.
 internal const val AUTOPLAY_STALL_MS = 45_000L
+/** Longest a next-episode hand-off waits on any one subtitle lookup. */
+internal const val AUTOPLAY_SUBTITLE_STEP_MS = 10_000L
 // Once the next episode is opened: time allowed for its first frame (torrents start slowly).
 internal const val AUTOPLAY_FIRST_FRAME_MS = 60_000L
 
@@ -444,9 +447,14 @@ class PlaybackSessionViewModel @Inject constructor(
         episodeSwitchJob = viewModelScope.launch {
             try {
                 val streamsDeferred = async { requestOrFallback(emptyList()) { addonRepository.getStreams("series", nextStreamId) } }
-                val subtitlesDeferred = async { requestOrFallback(emptyList()) { subtitleRepository.getSubtitles("series", nextStreamId) } }
+                val subtitlesDeferred = async {
+                    withTimeoutOrNull(AUTOPLAY_SUBTITLE_STEP_MS) {
+                        requestOrFallback(emptyList()) { subtitleRepository.getSubtitles("series", nextStreamId) }
+                    }.orEmpty()
+                }
 
                 val rawStreams = streamsDeferred.await()
+                switchStep = "finding subtitles for ${rawStreams.size} sources"
                 val addonSubs = subtitlesDeferred.await()
                 switchStep = "ranking ${rawStreams.size} sources"
 
@@ -459,7 +467,8 @@ class PlaybackSessionViewModel @Inject constructor(
                 val watched = currentStream
                 val streams = ranked.filterNot { isSameFile(it, watched, watchedUrl) }
                 if (streams.size < ranked.size) {
-                    AppErrors.e("Autoplay", "Skipped ${ranked.size - streams.size} source(s) for $nextPlaybackTitle that point at the episode just watched")
+                    // Expected behavior, not a fault: logged, never filed.
+                    android.util.Log.i("Autoplay", "Skipped ${ranked.size - streams.size} source(s) for $nextPlaybackTitle that point at the episode just watched")
                 }
                 switchStep = "choosing from ${streams.size} sources"
 
@@ -508,12 +517,16 @@ class PlaybackSessionViewModel @Inject constructor(
                 switchStep = "finding subtitles (${if (nextUrl.startsWith("magnet:")) "torrent" else "direct link"})"
                 playbackStatus = "Next episode · finding subtitles"
 
-                val sourceAwareSubs = subtitleRepository.getSubtitlesForStream(
-                    type = "series",
-                    playbackId = nextStreamId,
-                    stream = streamToPlay,
-                    fallback = addonSubs
-                )
+                // Subtitles never hold up the next episode: past the limit it opens with
+                // the generic results already fetched.
+                val sourceAwareSubs = withTimeoutOrNull(AUTOPLAY_SUBTITLE_STEP_MS) {
+                    subtitleRepository.getSubtitlesForStream(
+                        type = "series",
+                        playbackId = nextStreamId,
+                        stream = streamToPlay,
+                        fallback = addonSubs
+                    )
+                } ?: addonSubs
                 switchStep = "opening the source"
                 playbackStatus = "Next episode · opening $nextPlaybackTitle"
                 // Opening can stall after the switch itself is done: the new
