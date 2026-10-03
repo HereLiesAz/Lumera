@@ -5,6 +5,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.LibraryAdd
+import androidx.compose.material.icons.filled.LibraryAddCheck
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Recommend
@@ -31,6 +32,7 @@ import com.hereliesaz.illumera.data.model.stremio.MetaVideo
 import com.hereliesaz.illumera.data.profile.ProfileConfigurationManager
 import com.hereliesaz.illumera.data.repository.AddonRepository
 import com.hereliesaz.illumera.data.trakt.TraktSyncManager
+import com.hereliesaz.illumera.data.trakt.traktIdsFor
 import com.hereliesaz.illumera.data.wutch.WutchManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -95,7 +97,8 @@ data class MediaActionTarget(
 data class MediaActionState(
     val inWatchlist: Boolean = false,
     val watched: Boolean = false,
-    val traktAvailable: Boolean = false
+    val traktAvailable: Boolean = false,
+    val inTraktCollection: Boolean = false
 )
 
 private data class ResolvedMediaTarget(
@@ -130,7 +133,9 @@ class MediaActionsViewModel @Inject constructor(
             MediaActionState(
                 inWatchlist = inWatchlist,
                 watched = watched,
-                traktAvailable = resolved.traktAvailable
+                traktAvailable = resolved.traktAvailable,
+                inTraktCollection = resolved.traktAvailable &&
+                    traktSyncManager.isInTraktCollection(resolved.canonicalId)
             )
         }
     }
@@ -184,12 +189,15 @@ class MediaActionsViewModel @Inject constructor(
         }
     }
 
-    fun addToTraktLibrary(target: MediaActionTarget) {
+    fun toggleTraktLibrary(target: MediaActionTarget, currentlyInLibrary: Boolean) {
         val ownerProfileId = profileConfigurationManager.activeProfileId.value ?: return
         viewModelScope.launch(Dispatchers.IO) {
             profileConfigurationManager.withActiveProfileRuntime(ownerProfileId) {
                 val resolved = resolveTarget(target)
-                if (resolved.traktAvailable) {
+                if (!resolved.traktAvailable) return@withActiveProfileRuntime
+                if (currentlyInLibrary) {
+                    traktSyncManager.pushRemoveFromCollection(resolved.canonicalId, resolved.type)
+                } else {
                     traktSyncManager.pushAddToCollection(resolved.canonicalId, resolved.type)
                 }
             }
@@ -220,7 +228,7 @@ class MediaActionsViewModel @Inject constructor(
                 ?: target.parentSeriesPoster
                 ?: target.poster,
             videos = target.videos.ifEmpty { resolvedMeta?.videos.orEmpty() },
-            traktAvailable = canonicalId.startsWith("tt")
+            traktAvailable = traktIdsFor(canonicalId) != null
         )
     }
 
@@ -485,12 +493,19 @@ fun MediaCardActionMenu(
                 )
             }
         }
+        val inTraktLibrary = state?.inTraktCollection == true
         DropdownMenuItem(
-            text = { Text("Add to Trakt library") },
-            leadingIcon = { Icon(Icons.Default.LibraryAdd, contentDescription = null) },
+            text = { Text(if (inTraktLibrary) "Remove from Trakt library" else "Add to Trakt library") },
+            leadingIcon = {
+                Icon(
+                    imageVector = if (inTraktLibrary) Icons.Default.LibraryAddCheck else Icons.Default.LibraryAdd,
+                    contentDescription = null
+                )
+            },
             enabled = state?.traktAvailable != false,
             onClick = {
-                viewModel.addToTraktLibrary(target)
+                viewModel.toggleTraktLibrary(target, inTraktLibrary)
+                state = state?.copy(inTraktCollection = !inTraktLibrary)
                 onDismissRequest()
             }
         )

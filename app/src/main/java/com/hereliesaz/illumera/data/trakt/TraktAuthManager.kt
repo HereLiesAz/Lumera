@@ -129,7 +129,7 @@ class TraktAuthManager @Inject constructor(
     private suspend fun markLocalWatchlistForMerge(profileId: Int) {
         try {
             dao.getWatchlistOnce(profileId)
-                .filter { it.id.startsWith("tt") }
+                .filter { traktIdsFor(it.id) != null }
                 .forEach { watchlistPendingStore.mark(profileId, it.id, it.type, TraktWatchlistPendingStore.Op.ADD) }
         } catch (cancelled: CancellationException) {
             throw cancelled

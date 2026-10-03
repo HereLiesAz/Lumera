@@ -12,6 +12,8 @@ import com.hereliesaz.illumera.data.model.trakt.TraktSyncEpisode
 import com.hereliesaz.illumera.data.model.trakt.TraktSyncItem
 import com.hereliesaz.illumera.data.model.trakt.TraktSyncRequest
 import com.hereliesaz.illumera.data.model.trakt.TraktSyncSeason
+import com.hereliesaz.illumera.data.model.trakt.TraktWatchedMovie
+import com.hereliesaz.illumera.data.model.trakt.TraktWatchedShow
 import com.hereliesaz.illumera.data.model.trakt.TraktWatchlistItem
 import com.hereliesaz.illumera.data.remote.TraktSyncApiService
 import kotlinx.coroutines.CancellationException
@@ -40,10 +42,19 @@ class TraktSyncManager @Inject constructor(
 
     private val syncMutex = Mutex()
 
+    // Guards checkAndSync so the foreground trigger, the 30 s poll and the background
+    // worker never run overlapping activity checks.
+    private val checkMutex = Mutex()
+
     // Last known activity timestamps from Trakt (Fix #4/#10: volatile for thread safety)
     @Volatile private var lastWatchlistActivity: String? = null
     @Volatile private var lastPlaybackActivity: String? = null
     @Volatile private var lastWatchedActivity: String? = null
+    @Volatile private var lastCollectionActivity: String? = null
+
+    // Trakt collection membership (local ids, IMDb and "tmdb:N"), cached per profile.
+    @Volatile private var collectionIds: Set<String>? = null
+    @Volatile private var collectionProfileId: Int? = null
 
     // IDs currently being deleted from Trakt — sync skips these to prevent race conditions (Fix 5)
     // Fix #2: Thread-safe set for concurrent access from sync poll and delete operations
@@ -55,7 +66,16 @@ class TraktSyncManager @Inject constructor(
      */
     suspend fun checkAndSync(): Boolean {
         if (traktAuthManager.getAccessToken() == null) return false
+        // Another check is already running — it covers this one.
+        if (!checkMutex.tryLock()) return false
+        try {
+            return checkAndSyncLocked()
+        } finally {
+            checkMutex.unlock()
+        }
+    }
 
+    private suspend fun checkAndSyncLocked(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 val response = traktSyncApi.getLastActivities()
@@ -98,6 +118,20 @@ class TraktSyncManager @Inject constructor(
                     synced = true
                 }
 
+                // Check collection changes (only refetch if membership was ever loaded)
+                val collectionTimestamp = listOfNotNull(
+                    activities.movies?.collectedAt,
+                    activities.episodes?.collectedAt
+                ).maxOrNull()
+                if (collectionTimestamp != null && collectionTimestamp != lastCollectionActivity) {
+                    val firstSeen = lastCollectionActivity == null
+                    lastCollectionActivity = collectionTimestamp
+                    if (!firstSeen || collectionIds == null) {
+                        refreshCollection()
+                        synced = true
+                    }
+                }
+
                 synced
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -132,6 +166,16 @@ class TraktSyncManager @Inject constructor(
             }
         } ?: Log.w(TAG, "Initial sync timed out")
         syncWatchlist()
+        // Bring Trakt's watched history in so watched badges are right on a fresh install.
+        withContext(Dispatchers.IO) {
+            try {
+                importWatchedHistory()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                com.hereliesaz.illumera.crash.AppErrors.w(TAG, "Initial watched import failed", e)
+            }
+        }
     }
 
     /**
@@ -161,25 +205,21 @@ class TraktSyncManager @Inject constructor(
                 // 2. Get local watchlist
                 val localItems = dao.getWatchlistOnce(profileId)
 
-                // 3. Build lookup sets
-                val traktImdbIds = traktItems.mapNotNull { item ->
-                    when (item.type) {
-                        "movie" -> item.movie?.ids?.imdb
-                        "show" -> item.show?.ids?.imdb
-                        else -> null
-                    }
-                }.toSet()
+                // 3. Build lookup sets. A Trakt item matches a local one saved
+                //    under either its IMDb id or "tmdb:N".
+                fun idsOf(item: TraktWatchlistItem) = when (item.type) {
+                    "movie" -> localIdsFor(item.movie?.ids)
+                    "show" -> localIdsFor(item.show?.ids)
+                    else -> emptyList()
+                }
+                val traktLocalIds = traktItems.flatMap { idsOf(it) }.toSet()
 
-                val localImdbIds = localItems.map { it.id }.toSet()
+                val localIds = localItems.map { it.id }.toSet()
 
                 // 4. Pull Trakt → local (items on Trakt but not local)
                 val toPull = traktItems.filter { item ->
-                    val imdbId = when (item.type) {
-                        "movie" -> item.movie?.ids?.imdb
-                        "show" -> item.show?.ids?.imdb
-                        else -> null
-                    }
-                    imdbId != null && imdbId !in localImdbIds && imdbId !in pendingRemoves
+                    val ids = idsOf(item)
+                    ids.isNotEmpty() && ids.none { it in localIds || it in pendingRemoves }
                 }
                 if (toPull.isNotEmpty()) {
                     pullFromTrakt(toPull)
@@ -189,9 +229,11 @@ class TraktSyncManager @Inject constructor(
                 // 5. Remove local items no longer on Trakt (deleted externally).
                 // Local adds are pushed via pushAdd(); anything local, missing from
                 // Trakt and not still pending was removed on Trakt's side.
-                // Only consider items with IMDb-format IDs — items without them
+                // Only consider items with Trakt-mappable IDs (IMDb or TMDB) — others
                 // can't be matched against Trakt's response. (Fix: audit #7)
-                val toRemove = localItems.filter { it.id.startsWith("tt") && it.id !in traktImdbIds && it.id !in pendingAdds }
+                val toRemove = localItems.filter {
+                    traktIdsFor(it.id) != null && it.id !in traktLocalIds && it.id !in pendingAdds
+                }
                 for (item in toRemove) {
                     dao.removeFromWatchlist(profileId, item.id)
                     Log.d(TAG, "Removed ${item.title} (deleted on Trakt)")
@@ -245,22 +287,72 @@ class TraktSyncManager @Inject constructor(
     }
 
     /** Add a movie/show to the user's Trakt collection (Library). */
-    suspend fun pushAddToCollection(imdbId: String, type: String) {
-        if (traktAuthManager.getAccessToken() == null || !imdbId.startsWith("tt")) return
+    suspend fun pushAddToCollection(id: String, type: String) = pushCollectionChange(id, type, add = true)
+
+    /** Remove a movie/show from the user's Trakt collection (Library). */
+    suspend fun pushRemoveFromCollection(id: String, type: String) = pushCollectionChange(id, type, add = false)
+
+    private suspend fun pushCollectionChange(id: String, type: String, add: Boolean) {
+        if (traktAuthManager.getAccessToken() == null) return
+        val ids = traktIdsFor(id) ?: return
+        val activeProfile = profileId
         withContext(Dispatchers.IO) {
             try {
-                val item = listOf(TraktSyncItem(ids = TraktIds(imdb = imdbId)))
+                val item = listOf(TraktSyncItem(ids = ids))
                 val body = if (type == "movie") TraktSyncRequest(movies = item)
                     else TraktSyncRequest(shows = item)
-                val response = traktSyncApi.addToCollection(body)
+                val response = if (add) traktSyncApi.addToCollection(body)
+                    else traktSyncApi.removeFromCollection(body)
                 if (!response.isSuccessful) {
-                    Log.w(TAG, "Trakt collection add failed: ${response.code()}")
+                    Log.w(TAG, "Trakt collection ${if (add) "add" else "remove"} failed: ${response.code()}")
+                } else if (collectionProfileId == activeProfile) {
+                    collectionIds = collectionIds?.let { if (add) it + id else it - id }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                com.hereliesaz.illumera.crash.AppErrors.w(TAG, "Failed to add item to Trakt collection", e)
+                com.hereliesaz.illumera.crash.AppErrors.w(TAG, "Failed to update Trakt collection", e)
             }
+        }
+    }
+
+    /**
+     * Whether [id] is in the active profile's Trakt collection. Loads membership once per
+     * profile; checkAndSync refreshes it when Trakt reports collection activity.
+     * Returns false when not connected or Trakt can't be reached.
+     */
+    suspend fun isInTraktCollection(id: String): Boolean {
+        if (traktAuthManager.getAccessToken() == null) return false
+        val cached = collectionIds.takeIf { collectionProfileId == profileId }
+            ?: withContext(Dispatchers.IO) { refreshCollection() }
+            ?: return false
+        return id in cached
+    }
+
+    /** Re-fetches collection membership; null (cache untouched) on failure. */
+    private suspend fun refreshCollection(): Set<String>? {
+        val activeProfile = profileId
+        return try {
+            val movies = traktSyncApi.getCollectionMovies()
+            val shows = traktSyncApi.getCollectionShows()
+            if (!movies.isSuccessful || !shows.isSuccessful) {
+                Log.w(TAG, "Trakt collection fetch failed: ${movies.code()}/${shows.code()}")
+                return null
+            }
+            val ids = buildSet {
+                movies.body()?.forEach { addAll(localIdsFor(it.movie?.ids)) }
+                shows.body()?.forEach { addAll(localIdsFor(it.show?.ids)) }
+            }
+            if (profileId == activeProfile) {
+                collectionIds = ids
+                collectionProfileId = activeProfile
+            }
+            ids
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            com.hereliesaz.illumera.crash.AppErrors.w(TAG, "Failed to fetch Trakt collection", e)
+            null
         }
     }
 
@@ -270,7 +362,8 @@ class TraktSyncManager @Inject constructor(
         episodes: List<Pair<Int, Int>>,
         watched: Boolean
     ) {
-        if (traktAuthManager.getAccessToken() == null || !showImdbId.startsWith("tt") || episodes.isEmpty()) return
+        if (traktAuthManager.getAccessToken() == null || episodes.isEmpty()) return
+        val showIds = traktIdsFor(showImdbId) ?: return
         withContext(Dispatchers.IO) {
             try {
                 val seasons = episodes
@@ -285,7 +378,7 @@ class TraktSyncManager @Inject constructor(
                 val body = TraktSyncRequest(
                     shows = listOf(
                         TraktSyncItem(
-                            ids = TraktIds(imdb = showImdbId),
+                            ids = showIds,
                             seasons = seasons
                         )
                     )
@@ -309,9 +402,10 @@ class TraktSyncManager @Inject constructor(
      */
     suspend fun pushMovieWatched(imdbId: String) {
         if (traktAuthManager.getAccessToken() == null) return
+        val ids = traktIdsFor(imdbId) ?: return
         withContext(Dispatchers.IO) {
             try {
-                val body = TraktSyncRequest(movies = listOf(TraktSyncItem(ids = TraktIds(imdb = imdbId))))
+                val body = TraktSyncRequest(movies = listOf(TraktSyncItem(ids = ids)))
                 val response = traktSyncApi.addToHistory(body)
                 Log.d(TAG, "pushMovieWatched $imdbId: ${response.code()}")
             } catch (cancelled: CancellationException) {
@@ -327,9 +421,10 @@ class TraktSyncManager @Inject constructor(
      */
     suspend fun pushMovieUnwatched(imdbId: String) {
         if (traktAuthManager.getAccessToken() == null) return
+        val ids = traktIdsFor(imdbId) ?: return
         withContext(Dispatchers.IO) {
             try {
-                val body = TraktSyncRequest(movies = listOf(TraktSyncItem(ids = TraktIds(imdb = imdbId))))
+                val body = TraktSyncRequest(movies = listOf(TraktSyncItem(ids = ids)))
                 val response = traktSyncApi.removeFromHistory(body)
                 Log.d(TAG, "pushMovieUnwatched $imdbId: ${response.code()}")
             } catch (cancelled: CancellationException) {
@@ -345,12 +440,13 @@ class TraktSyncManager @Inject constructor(
      */
     suspend fun pushEpisodeWatched(showImdbId: String, season: Int, episode: Int) {
         if (traktAuthManager.getAccessToken() == null) return
+        val showIds = traktIdsFor(showImdbId) ?: return
         withContext(Dispatchers.IO) {
             try {
                 val body = TraktSyncRequest(
                     shows = listOf(
                         TraktSyncItem(
-                            ids = TraktIds(imdb = showImdbId),
+                            ids = showIds,
                             seasons = listOf(TraktSyncSeason(season, listOf(TraktSyncEpisode(episode))))
                         )
                     )
@@ -370,12 +466,13 @@ class TraktSyncManager @Inject constructor(
      */
     suspend fun pushEpisodeUnwatched(showImdbId: String, season: Int, episode: Int) {
         if (traktAuthManager.getAccessToken() == null) return
+        val showIds = traktIdsFor(showImdbId) ?: return
         withContext(Dispatchers.IO) {
             try {
                 val body = TraktSyncRequest(
                     shows = listOf(
                         TraktSyncItem(
-                            ids = TraktIds(imdb = showImdbId),
+                            ids = showIds,
                             seasons = listOf(TraktSyncSeason(season, listOf(TraktSyncEpisode(episode))))
                         )
                     )
@@ -419,9 +516,9 @@ class TraktSyncManager @Inject constructor(
                 val traktPlaybackIds = mutableMapOf<String, TraktPlaybackItem>()
                 for (item in traktPlayback) {
                     val id = when (item.type) {
-                        "movie" -> item.movie?.ids?.imdb
+                        "movie" -> localIdFor(item.movie?.ids)
                         "episode" -> {
-                            val showImdb = item.show?.ids?.imdb ?: continue
+                            val showImdb = localIdFor(item.show?.ids) ?: continue
                             val ep = item.episode ?: continue
                             "$showImdb:${ep.season}:${ep.number}"
                         }
@@ -554,74 +651,35 @@ class TraktSyncManager @Inject constructor(
     suspend fun syncSeriesNextUp() {
         withContext(Dispatchers.IO) {
             try {
-                // Sync watched movies from Trakt
+                // Pull Trakt's watched movies and shows into local history (batched)
                 val moviesResponse = traktSyncApi.getWatchedMovies()
-                val traktWatchedMovieIds = mutableSetOf<String>()
-                if (moviesResponse.isSuccessful) {
-                    moviesResponse.body()?.forEach { watchedMovie ->
-                        val imdbId = watchedMovie.movie.ids.imdb ?: return@forEach
-                        traktWatchedMovieIds.add(imdbId)
-                        val existing = dao.getHistoryItem(imdbId)
-                        if (existing == null) {
-                            dao.upsertHistory(
-                                WatchHistoryEntity(
-                                    id = imdbId,
-                                    title = watchedMovie.movie.title ?: "Unknown",
-                                    poster = null,
-                                    position = 0L,
-                                    duration = 0L,
-                                    lastWatched = parseIsoTimestamp(watchedMovie.lastWatchedAt),
-                                    type = "movie",
-                                    watched = true,
-                                    scrobbled = true
-                                )
-                            )
-                        } else if (!existing.watched) {
-                            dao.upsertHistory(existing.copy(watched = true))
-                        }
-                    }
-                }
+                val watchedMovies = if (moviesResponse.isSuccessful) moviesResponse.body().orEmpty() else emptyList()
+                val traktWatchedMovieIds = watchedMovies.flatMap { localIdsFor(it.movie.ids) }.toSet()
 
                 // Get all watched shows from Trakt
                 val showsResponse = traktSyncApi.getWatchedShows()
                 if (!showsResponse.isSuccessful) {
+                    importWatchedHistory(watchedMovies, emptyList())
                     Log.w(TAG, "Failed to fetch watched shows for next-up: ${showsResponse.code()}")
                     return@withContext
                 }
                 val watchedShows = showsResponse.body() ?: return@withContext
+                importWatchedHistory(watchedMovies, watchedShows)
 
                 val traktWatchedEpisodeIds = mutableSetOf<String>()
-                var updated = 0
                 for (show in watchedShows) {
-                    val imdbId = show.show.ids.imdb ?: continue
-                    val traktSlug = show.show.ids.slug ?: continue
-                    val showTitle = show.show.title ?: "Unknown"
-
-                    // Create watched history entries for episodes marked watched on Trakt
+                    val showIds = localIdsFor(show.show.ids)
                     show.seasons?.forEach { season ->
                         season.episodes?.forEach { ep ->
-                            val playbackId = "$imdbId:${season.number}:${ep.number}"
-                            traktWatchedEpisodeIds.add(playbackId)
-                            val existing = dao.getHistoryItem(playbackId)
-                            if (existing == null) {
-                                dao.upsertHistory(
-                                    WatchHistoryEntity(
-                                        id = playbackId,
-                                        title = "S${season.number}:E${ep.number} - $showTitle",
-                                        poster = null,
-                                        position = 0L,
-                                        duration = 0L,
-                                        lastWatched = parseIsoTimestamp(ep.lastWatchedAt),
-                                        type = "series",
-                                        watched = true,
-                                        scrobbled = true
-                                    )
-                                )
-                            } else if (!existing.watched) {
-                                dao.upsertHistory(existing.copy(watched = true))
-                            }
+                            showIds.forEach { traktWatchedEpisodeIds.add("$it:${season.number}:${ep.number}") }
                         }
                     }
+                }
+
+                var updated = 0
+                for (show in watchedShows) {
+                    val imdbId = localIdFor(show.show.ids) ?: continue
+                    val traktSlug = show.show.ids.slug ?: show.show.ids.trakt?.toString() ?: continue
 
                     try {
                         val progressResponse = traktSyncApi.getShowProgress(traktSlug)
@@ -701,6 +759,79 @@ class TraktSyncManager @Inject constructor(
         }
     }
 
+    /**
+     * Fetches Trakt's watched movies and shows and imports them into local history.
+     * Returns the number of rows written, or null if Trakt couldn't be read.
+     */
+    private suspend fun importWatchedHistory(): Int? {
+        val movies = traktSyncApi.getWatchedMovies()
+        val shows = traktSyncApi.getWatchedShows()
+        if (!movies.isSuccessful || !shows.isSuccessful) {
+            Log.w(TAG, "Watched history fetch failed: ${movies.code()}/${shows.code()}")
+            return null
+        }
+        return importWatchedHistory(movies.body().orEmpty(), shows.body().orEmpty())
+    }
+
+    /**
+     * Upserts watched rows for Trakt titles/episodes not already watched locally, in one
+     * batch. Local in-progress rows newer than Trakt's watch are left alone; see
+     * [mergeTraktWatchedHistory]. History lives in the active profile's runtime tables.
+     */
+    private suspend fun importWatchedHistory(
+        movies: List<TraktWatchedMovie>,
+        shows: List<TraktWatchedShow>
+    ): Int {
+        val incoming = ArrayList<TraktWatchedEntry>()
+        for (watched in movies) {
+            val ids = localIdsFor(watched.movie.ids)
+            val id = ids.firstOrNull() ?: continue
+            incoming += TraktWatchedEntry(
+                localIds = ids,
+                entity = WatchHistoryEntity(
+                    id = id,
+                    title = watched.movie.title ?: "Unknown",
+                    poster = null,
+                    position = 0L,
+                    duration = 0L,
+                    lastWatched = parseIsoTimestamp(watched.lastWatchedAt),
+                    type = "movie",
+                    watched = true,
+                    scrobbled = true
+                )
+            )
+        }
+        for (show in shows) {
+            val showIds = localIdsFor(show.show.ids)
+            val showId = showIds.firstOrNull() ?: continue
+            val showTitle = show.show.title ?: "Unknown"
+            show.seasons?.forEach { season ->
+                season.episodes?.forEach { ep ->
+                    incoming += TraktWatchedEntry(
+                        localIds = showIds.map { "$it:${season.number}:${ep.number}" },
+                        entity = WatchHistoryEntity(
+                            id = "$showId:${season.number}:${ep.number}",
+                            title = "S${season.number}:E${ep.number} - $showTitle",
+                            poster = null,
+                            position = 0L,
+                            duration = 0L,
+                            lastWatched = parseIsoTimestamp(ep.lastWatchedAt ?: show.lastWatchedAt),
+                            type = "series",
+                            watched = true,
+                            scrobbled = true
+                        )
+                    )
+                }
+            }
+        }
+        if (incoming.isEmpty()) return 0
+        val writes = mergeTraktWatchedHistory(dao.getAllWatchHistoryOnce(), incoming)
+            .filter { it.id !in pendingDeletes }
+        if (writes.isNotEmpty()) dao.upsertHistoryItems(writes)
+        Log.i(TAG, "Watched import: ${writes.size} of ${incoming.size} rows written")
+        return writes.size
+    }
+
     /** Mark IDs as pending deletion so the sync poll doesn't re-add them. */
     fun markPendingDelete(ids: List<String>) {
         for (id in ids) {
@@ -722,6 +853,9 @@ class TraktSyncManager @Inject constructor(
         lastWatchlistActivity = null
         lastPlaybackActivity = null
         lastWatchedActivity = null
+        lastCollectionActivity = null
+        collectionIds = null
+        collectionProfileId = null
     }
 
     // ── Internal ──
@@ -771,7 +905,9 @@ class TraktSyncManager @Inject constructor(
 
     /** Returns whether Trakt accepted the removal. */
     private suspend fun removeFromTrakt(itemId: String, type: String): Boolean {
-        val item = listOf(TraktSyncItem(ids = TraktIds(imdb = itemId)))
+        // Nothing Trakt can identify — treat as accepted so it doesn't stay pending forever.
+        val ids = traktIdsFor(itemId) ?: return true
+        val item = listOf(TraktSyncItem(ids = ids))
         val body = if (type == "movie") TraktSyncRequest(movies = item)
                    else TraktSyncRequest(shows = item)
         val response = traktSyncApi.removeFromWatchlist(body)
@@ -782,9 +918,9 @@ class TraktSyncManager @Inject constructor(
     /** Returns whether Trakt accepted the items (true when there was nothing to send). */
     private suspend fun pushToTrakt(items: List<WatchlistEntity>): Boolean {
         val movies = items.filter { it.type == "movie" }
-            .map { TraktSyncItem(ids = TraktIds(imdb = it.id)) }
+            .mapNotNull { item -> traktIdsFor(item.id)?.let { TraktSyncItem(ids = it) } }
         val shows = items.filter { it.type == "series" }
-            .map { TraktSyncItem(ids = TraktIds(imdb = it.id)) }
+            .mapNotNull { item -> traktIdsFor(item.id)?.let { TraktSyncItem(ids = it) } }
 
         val body = TraktSyncRequest(
             movies = movies.ifEmpty { null },
@@ -801,26 +937,6 @@ class TraktSyncManager @Inject constructor(
             return response.isSuccessful
         }
         return true
-    }
-
-    /**
-     * Strip stream index suffix from playback ID for Trakt lookup. (Fix 1)
-     * "tt123:1:3:0" → "tt123:1:3"  (has stream index)
-     * "tt123:1:3"   → "tt123:1:3"  (already normalized)
-     * "tt123"       → "tt123"      (movie, no change)
-     */
-    private fun normalizePlaybackId(id: String): String {
-        val parts = id.split(":")
-        // Episode with stream index: 4+ parts where last is numeric (stream idx)
-        // and second-to-last and third-to-last are also numeric (episode, season)
-        if (parts.size >= 4 &&
-            parts.last().toIntOrNull() != null &&
-            parts[parts.size - 2].toIntOrNull() != null &&
-            parts[parts.size - 3].toIntOrNull() != null
-        ) {
-            return parts.dropLast(1).joinToString(":")
-        }
-        return id
     }
 
     /**
@@ -846,18 +962,20 @@ class TraktSyncManager @Inject constructor(
         try {
             val moviesResponse = traktSyncApi.getWatchedMovies()
             if (!moviesResponse.isSuccessful) return null
-            moviesResponse.body()?.forEach { it.movie.ids.imdb?.let { id -> movieIds.add(id) } }
+            moviesResponse.body()?.forEach { movieIds.addAll(localIdsFor(it.movie.ids)) }
 
             val showsResponse = traktSyncApi.getWatchedShows()
             if (!showsResponse.isSuccessful) return null
             showsResponse.body()?.forEach { show ->
-                val showImdb = show.show.ids.imdb ?: return@forEach
-                val episodes = episodeMap.getOrPut(showImdb) { mutableSetOf() }
+                val showIds = localIdsFor(show.show.ids)
+                if (showIds.isEmpty()) return@forEach
+                val episodes = mutableSetOf<Pair<Int, Int>>()
                 show.seasons?.forEach { season ->
                     season.episodes?.forEach { ep ->
                         episodes.add(Pair(season.number, ep.number))
                     }
                 }
+                showIds.forEach { episodeMap.getOrPut(it) { mutableSetOf() }.addAll(episodes) }
             }
         } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -889,9 +1007,9 @@ class TraktSyncManager @Inject constructor(
 
                 for (item in items) {
                     val traktId = when (item.type) {
-                        "movie" -> item.movie?.ids?.imdb
+                        "movie" -> localIdFor(item.movie?.ids)
                         "episode" -> {
-                            val showImdb = item.show?.ids?.imdb ?: continue
+                            val showImdb = localIdFor(item.show?.ids) ?: continue
                             val ep = item.episode ?: continue
                             "$showImdb:${ep.season}:${ep.number}"
                         }
@@ -919,12 +1037,12 @@ class TraktSyncManager @Inject constructor(
         for (item in items) {
             val (id, title, type) = when (item.type) {
                 "movie" -> Triple(
-                    item.movie?.ids?.imdb ?: continue,
+                    localIdFor(item.movie?.ids) ?: continue,
                     item.movie?.title ?: "Unknown",
                     "movie"
                 )
                 "show" -> Triple(
-                    item.show?.ids?.imdb ?: continue,
+                    localIdFor(item.show?.ids) ?: continue,
                     item.show?.title ?: "Unknown",
                     "series"
                 )

@@ -1,5 +1,7 @@
 package com.hereliesaz.illumera.data.remote
 
+import com.hereliesaz.illumera.data.model.trakt.TraktCollectedMovie
+import com.hereliesaz.illumera.data.model.trakt.TraktCollectedShow
 import com.hereliesaz.illumera.data.model.trakt.TraktLastActivities
 import com.hereliesaz.illumera.data.model.trakt.TraktMovie
 import com.hereliesaz.illumera.data.model.trakt.TraktPlaybackItem
@@ -57,6 +59,12 @@ interface TraktSyncApiService {
     ): Response<TraktSyncResponse>
 
     // ── Collection / Trakt Library ──
+
+    @GET("sync/collection/movies")
+    suspend fun getCollectionMovies(): Response<List<TraktCollectedMovie>>
+
+    @GET("sync/collection/shows")
+    suspend fun getCollectionShows(): Response<List<TraktCollectedShow>>
 
     @POST("sync/collection")
     suspend fun addToCollection(

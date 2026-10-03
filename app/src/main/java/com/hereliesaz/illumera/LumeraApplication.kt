@@ -5,6 +5,7 @@ import android.content.Context
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import com.hereliesaz.illumera.crash.CrashReporting
+import com.hereliesaz.illumera.data.trakt.TraktSyncWorker
 import dagger.hilt.android.HiltAndroidApp
 import org.acra.ReportField
 import org.acra.config.httpSender
@@ -69,6 +70,12 @@ class LumeraApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         CrashReporting.startAnrReporting(this)
         startupOptimizer.warmup()
+        try {
+            TraktSyncWorker.schedule(this)
+        } catch (e: IllegalStateException) {
+            // WorkManager isn't initialized (e.g. under test runners without app startup).
+            android.util.Log.w("LumeraApplication", "Couldn't schedule background Trakt sync", e)
+        }
     }
 
     override fun newImageLoader(): ImageLoader = imageLoader

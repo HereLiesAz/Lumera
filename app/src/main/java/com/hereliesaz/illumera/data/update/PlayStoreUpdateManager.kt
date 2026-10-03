@@ -14,6 +14,12 @@ import com.google.android.play.core.install.model.AppUpdateType
 import com.google.android.play.core.install.model.UpdateAvailability
 import com.hereliesaz.illumera.BuildConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
@@ -22,7 +28,8 @@ import javax.inject.Singleton
 sealed class PlayStoreUpdateState {
     data object Idle : PlayStoreUpdateState()
     data object Checking : PlayStoreUpdateState()
-    data class UpdateAvailable(val versionCode: Int) : PlayStoreUpdateState()
+    /** [fromPlay] false: Play's update API hasn't caught up yet; the button opens the listing. */
+    data class UpdateAvailable(val versionCode: Int, val fromPlay: Boolean = true) : PlayStoreUpdateState()
     data object UpToDate : PlayStoreUpdateState()
     data object InProgress : PlayStoreUpdateState()
     data class Error(val message: String) : PlayStoreUpdateState()
@@ -36,8 +43,12 @@ sealed class PlayStoreUpdateState {
  */
 @Singleton
 class PlayStoreUpdateManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val okHttpClient: OkHttpClient
 ) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile
+    private var lastCheckAt = 0L
     private val manager: GooglePlayAppUpdateManager by lazy { AppUpdateManagerFactory.create(context) }
     private val _state = MutableStateFlow<PlayStoreUpdateState>(PlayStoreUpdateState.Idle)
     val state = _state.asStateFlow()
@@ -45,11 +56,21 @@ class PlayStoreUpdateManager @Inject constructor(
     @Volatile
     private var pendingInfo: AppUpdateInfo? = null
 
-    fun checkForUpdate() {
+    /**
+     * Asks Play, then falls back to the version the release workflow recorded as published.
+     * Play's update API can lag a new release by hours, and the app (especially on TV) can stay
+     * open for days, so this runs on every return to the foreground, at most every
+     * [RECHECK_INTERVAL_MS] unless [force] (a launch or the About screen).
+     */
+    fun checkForUpdate(force: Boolean = true) {
         if (!BuildConfig.USE_PLAY_UPDATES) {
             _state.value = PlayStoreUpdateState.Idle
             return
         }
+        val now = System.currentTimeMillis()
+        if (!force && now - lastCheckAt < RECHECK_INTERVAL_MS) return
+        if (_state.value is PlayStoreUpdateState.InProgress) return
+        lastCheckAt = now
 
         _state.value = PlayStoreUpdateState.Checking
         manager.appUpdateInfo
@@ -62,13 +83,40 @@ class PlayStoreUpdateManager @Inject constructor(
                         PlayStoreUpdateState.InProgress
                     else -> PlayStoreUpdateState.UpToDate
                 }
+                if (_state.value == PlayStoreUpdateState.UpToDate) checkPublishedVersion(PlayStoreUpdateState.UpToDate)
             }
             .addOnFailureListener { error ->
                 pendingInfo = null
-                _state.value = PlayStoreUpdateState.Error(
-                    error.message ?: "Could not check Google Play for updates."
+                checkPublishedVersion(
+                    PlayStoreUpdateState.Error(error.message ?: "Could not check Google Play for updates.")
                 )
             }
+    }
+
+    /**
+     * The release workflow records each published versionCode in version.properties on the
+     * default branch. When it is newer than this install, say so even if Play hasn't caught up.
+     */
+    private fun checkPublishedVersion(otherwise: PlayStoreUpdateState) {
+        scope.launch {
+            val published = runCatching { fetchPublishedVersionCode() }.getOrNull()
+            _state.value = if (published != null && published > BuildConfig.VERSION_CODE) {
+                PlayStoreUpdateState.UpdateAvailable(published, fromPlay = false)
+            } else {
+                otherwise
+            }
+        }
+    }
+
+    private fun fetchPublishedVersionCode(): Int? {
+        val url = "https://raw.githubusercontent.com/${BuildConfig.GITHUB_OWNER}/${BuildConfig.GITHUB_REPO}/main/version.properties"
+        okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            if (!response.isSuccessful) return null
+            return response.body?.string().orEmpty().lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.startsWith("versionCode=") }
+                ?.substringAfter('=')?.trim()?.toIntOrNull()
+        }
     }
 
     /**
@@ -80,7 +128,8 @@ class PlayStoreUpdateManager @Inject constructor(
         if (!BuildConfig.USE_PLAY_UPDATES) return
 
         val info = pendingInfo
-        if (info == null) {
+        val current = _state.value
+        if (info == null || (current is PlayStoreUpdateState.UpdateAvailable && !current.fromPlay)) {
             openPlayStoreListing()
             return
         }
@@ -131,6 +180,10 @@ class PlayStoreUpdateManager @Inject constructor(
             // launch checks Play again and will notify the user if still needed.
             PlayStoreUpdateState.Idle
         }
+    }
+
+    private companion object {
+        const val RECHECK_INTERVAL_MS = 30 * 60 * 1000L
     }
 
     fun openPlayStoreListing() {

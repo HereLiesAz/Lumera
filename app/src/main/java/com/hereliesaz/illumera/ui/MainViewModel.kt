@@ -1,5 +1,8 @@
 package com.hereliesaz.illumera.ui
 
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hereliesaz.illumera.data.debrid.DebridManager
@@ -41,6 +44,24 @@ class MainViewModel @Inject constructor(
 
     companion object {
         private const val TRAKT_POLL_INTERVAL_MS = 30_000L // 30 seconds
+    }
+
+    // App came back to the foreground: run the cheap activity check right away instead of
+    // waiting for the next poll tick. checkAndSync skips itself if one is already running.
+    private val foregroundObserver = object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) {
+            if (activeProfileId == null || traktSyncJob?.isActive != true) return
+            viewModelScope.launch(Dispatchers.IO) { traktSyncManager.checkAndSync() }
+        }
+    }
+
+    init {
+        ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
+    }
+
+    override fun onCleared() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver)
+        super.onCleared()
     }
 
     // Call this when user clicks a profile
