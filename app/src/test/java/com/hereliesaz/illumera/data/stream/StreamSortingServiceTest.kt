@@ -24,7 +24,7 @@ class StreamSortingServiceTest {
     )
 
     @Test
-    fun skipSeedless_removesOnlyExplicitZeroSeedSources() {
+    fun skipSeedless_ranksOnlyExplicitZeroSeedSourcesLast() {
         val streams = listOf(
             Stream(title = "1080p seeds: 0", url = "zero"),
             Stream(title = "1080p seeds: 8", url = "seeded"),
@@ -37,7 +37,8 @@ class StreamSortingServiceTest {
             ProfileEntity(name = "Test", sourceSkipSeedless = true)
         )
 
-        assertEquals(setOf("seeded", "unknown", "peer-only"), result.mapNotNull { it.url }.toSet())
+        assertEquals(setOf("seeded", "unknown", "peer-only"), result.take(3).mapNotNull { it.url }.toSet())
+        assertEquals("zero", result.last().url)
     }
 
     @Test
@@ -362,5 +363,29 @@ class StreamSortingServiceTest {
         val result = filter(streams, ProfileEntity(name = "Test"))
 
         assertEquals(listOf("4k", "italian-720"), result.mapNotNull { it.url })
+    }
+
+    @Test
+    fun filters_rankFailingSourcesLastWithoutRemovingThem() {
+        val streams = listOf(
+            Stream(title = "1080p badword release", url = "excluded-phrase"),
+            Stream(title = "720p clean", url = "disabled-quality"),
+            Stream(title = "1080p 50 GB", url = "oversized"),
+            Stream(title = "720p badword 50 GB", url = "fails-everything"),
+            Stream(title = "1080p 2 GB", url = "passes")
+        )
+
+        val result = service.sortAndFilter(
+            streams = streams,
+            enabledQualities = setOf(StreamQuality.FHD_1080P),
+            excludePhrases = listOf("badword"),
+            addonSortOrders = emptyMap(),
+            maxSizeGb = 10,
+            profile = ProfileEntity(name = "Test")
+        )
+
+        assertEquals(streams.size, result.size)
+        assertEquals("passes", result.first().url)
+        assertEquals("fails-everything", result.last().url)
     }
 }

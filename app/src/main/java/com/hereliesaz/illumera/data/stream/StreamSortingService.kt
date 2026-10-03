@@ -36,27 +36,24 @@ class StreamSortingService @Inject constructor() {
         // Pre-compute parsed info once per stream to avoid O(N log N × 3) parse calls.
         val parsed = streams.associateBy({ it }, { StreamParser.parse(it) })
 
+        // Filters rank, never remove: each criterion a source fails pushes it further down,
+        // so sources passing every filter are tried first and the rest remain as fallbacks.
+        val misses = streams.associateWith { stream ->
+            val info = parsed[stream] ?: StreamParser.parse(stream)
+            val text by lazy { StreamParser.combinedText(stream).lowercase() }
+            listOf(
+                info.quality !in enabledQualities,
+                lowerPhrases.isNotEmpty() && lowerPhrases.any { text.contains(it) },
+                skipSeedless && info.seeds == 0,
+                !matchesAudioLanguageRequirement(stream, profile),
+                maxSizeGb > 0 && (info.sizeBytes ?: 0L) > maxSizeBytes,
+                excludedFormats.isNotEmpty() && excludedFormats.intersect(info.formats).isNotEmpty()
+            ).count { it }
+        }
+
         return streams
-            .map { stream -> stream to (parsed[stream] ?: StreamParser.parse(stream)) }
-            .filter { (_, info) -> info.quality in enabledQualities }
-            .filter { (stream, _) ->
-                if (lowerPhrases.isEmpty()) return@filter true
-                val text = StreamParser.combinedText(stream).lowercase()
-                lowerPhrases.none { phrase -> text.contains(phrase) }
-            }
-            .filter { (_, info) -> !skipSeedless || info.seeds != 0 }
-            .filter { (_, info) ->
-                if (maxSizeGb <= 0) return@filter true
-                val sizeBytes = info.sizeBytes ?: return@filter true
-                sizeBytes <= maxSizeBytes
-            }
-            .filter { (_, info) ->
-                if (excludedFormats.isEmpty()) return@filter true
-                excludedFormats.intersect(info.formats).isEmpty()
-            }
-            .map { (stream, _) -> stream }
             .sortedWith(
-                forcedLanguageComparator(profile)
+                compareBy<Stream> { misses[it] ?: 0 }
                     .then(languagePreferenceComparator(profile))
                     .then(buildComparator(
                     addonSortOrders = addonSortOrders,
@@ -70,21 +67,7 @@ class StreamSortingService @Inject constructor() {
     }
 
     /**
-     * Forced audio never removes sources: sources that fail it sink below every source
-     * that satisfies it, so they are tried last. Forced subtitles don't rank sources at
-     * all; the player applies them (see ExoPlayerBackend.applyPendingTrackSelections).
-     */
-    private fun forcedLanguageComparator(profile: ProfileEntity?): Comparator<Stream> {
-        val misses = java.util.IdentityHashMap<Stream, Int>()
-        return compareBy { stream ->
-            misses.getOrPut(stream) {
-                if (matchesAudioLanguageRequirement(stream, profile)) 0 else 1
-            }
-        }
-    }
-
-    /**
-     * Preferred languages rank sources below the Force ordering; they never remove any.
+     * Preferred languages rank sources below the filter ranking; they never remove any.
      * Sources declaring the primary audio language come first, then the secondary; within
      * those, the primary then secondary subtitle language. Undeclared sources keep their
      * place after them, ordered by the rest of the ranking.
