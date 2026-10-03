@@ -168,8 +168,8 @@ android {
 // assembling or bundling a distributable artifact without the release keystore is an error,
 // not a silently-successful unsigned APK/AAB.
 val signingRequiredTasks = setOf("assembleRelease", "bundleRelease", "assemblePlay", "bundlePlay")
-gradle.taskGraph.whenReady { graph ->
-    val requiresSigning = graph.allTasks.any { task ->
+gradle.taskGraph.whenReady(Action<org.gradle.api.execution.TaskExecutionGraph> {
+    val requiresSigning = allTasks.any { task ->
         task.project.path == project.path && task.name in signingRequiredTasks
     }
     if (requiresSigning && !hasReleaseKeystore) {
@@ -179,7 +179,7 @@ gradle.taskGraph.whenReady { graph ->
                 "(or the matching RELEASE_* environment variables)."
         )
     }
-}
+})
 
 kotlin {
     compilerOptions {
