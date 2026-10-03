@@ -98,13 +98,17 @@ fun LumeraCard(
 
                     when (native.action) {
                         KeyEvent.ACTION_DOWN -> {
-                            if (native.repeatCount > 0) dpadLongPressTriggered = true
+                            // Held past the first key repeat: open the menu now, not on release.
+                            if (native.repeatCount > 0 && !dpadLongPressTriggered) {
+                                dpadLongPressTriggered = true
+                                effectiveLongClick()
+                            }
                             dpadLongPressTriggered
                         }
                         KeyEvent.ACTION_UP -> {
                             if (dpadLongPressTriggered) {
+                                // The menu already opened while held; the release is not a click.
                                 dpadLongPressTriggered = false
-                                effectiveLongClick()
                                 true
                             } else {
                                 false

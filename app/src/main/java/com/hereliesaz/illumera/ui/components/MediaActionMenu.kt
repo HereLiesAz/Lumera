@@ -7,9 +7,11 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Recommend
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +39,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import javax.inject.Inject
+
+/**
+ * Opens "More Like This" for a title: (type, id, title). Provided once by MainActivity so every
+ * card's menu and the Details page can open it without threading a callback through each card.
+ */
+val LocalOpenMoreLikeThis = staticCompositionLocalOf<((type: String, id: String, title: String) -> Unit)?> { null }
 
 /** A small, screen-agnostic target for card context actions. */
 data class MediaActionTarget(
@@ -459,6 +467,23 @@ fun MediaCardActionMenu(
                     onDismissRequest()
                 }
             )
+        }
+        val openMoreLikeThis = LocalOpenMoreLikeThis.current
+        if (openMoreLikeThis != null) {
+            // An episode's "like this" is its show's.
+            val isEpisode = target.type == "episode"
+            val likeId = if (isEpisode) target.parentSeriesId else target.id
+            val likeTitle = if (isEpisode) target.parentSeriesTitle ?: target.title else target.title
+            if (likeId != null) {
+                DropdownMenuItem(
+                    text = { Text("More like this") },
+                    leadingIcon = { Icon(Icons.Default.Recommend, contentDescription = null) },
+                    onClick = {
+                        onDismissRequest()
+                        openMoreLikeThis(if (isEpisode) "series" else target.type, likeId, likeTitle)
+                    }
+                )
+            }
         }
         DropdownMenuItem(
             text = { Text("Add to Trakt library") },

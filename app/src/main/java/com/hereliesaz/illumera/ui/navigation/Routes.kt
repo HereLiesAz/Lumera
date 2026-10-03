@@ -121,6 +121,15 @@ data class StudioKey(
     val instance: Int = 0
 ) : NavKey
 
+/** Titles like [id] (TMDB recommendations), opened from the card menu or a Details page. */
+@Serializable
+data class MoreLikeThisKey(
+    val type: String,
+    val id: String,
+    val title: String,
+    val instance: Int = 0
+) : NavKey
+
 /** The internal player; the playback session holds what it plays. Trailers use it too. */
 @Serializable
 data object PlayerKey : NavKey
@@ -139,6 +148,7 @@ val AppBackStackConfiguration: SavedStateConfiguration = SavedStateConfiguration
             subclass(DetailsKey::class, DetailsKey.serializer())
             subclass(CastKey::class, CastKey.serializer())
             subclass(StudioKey::class, StudioKey.serializer())
+            subclass(MoreLikeThisKey::class, MoreLikeThisKey.serializer())
             subclass(PlayerKey::class, PlayerKey.serializer())
         }
     }
@@ -237,6 +247,10 @@ object BackStackOps {
 
     fun openStudio(stack: MutableList<NavKey>, entityId: Int, kind: String, name: String, sourceType: String) {
         stack.add(StudioKey(entityId, kind, name, sourceType, instance = stack.count { it is StudioKey }))
+    }
+
+    fun openMoreLikeThis(stack: MutableList<NavKey>, type: String, id: String, title: String) {
+        stack.add(MoreLikeThisKey(type, id, title, instance = stack.count { it is MoreLikeThisKey }))
     }
 
     fun openGrid(stack: MutableList<NavKey>, title: String, configId: String) {

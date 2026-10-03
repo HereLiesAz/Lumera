@@ -6,7 +6,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 
 /**
  * Adds touch tap/long-press handling without changing keyboard/D-pad behavior.
- * Long-press actions are dispatched on release so context menus remain open.
+ * The long-press action fires at the system long-press timeout while the finger is still
+ * down, like every other Android app; the release that follows is not a tap.
  */
 fun Modifier.touchClick(
     enabled: Boolean = true,
@@ -15,17 +16,10 @@ fun Modifier.touchClick(
 ): Modifier {
     if (!enabled) return this
     return pointerInput(onClick, onLongClick) {
-        var longPressArmed = false
+        // detectTapGestures never reports a tap for a press that already fired onLongPress.
         detectTapGestures(
-            onPress = {
-                longPressArmed = false
-                val released = tryAwaitRelease()
-                if (released && longPressArmed) onLongClick?.invoke()
-            },
-            onTap = {
-                if (!longPressArmed) onClick()
-            },
-            onLongPress = onLongClick?.let { { longPressArmed = true } }
+            onTap = { onClick() },
+            onLongPress = onLongClick?.let { longClick -> { longClick() } }
         )
     }
 }

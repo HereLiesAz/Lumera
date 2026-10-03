@@ -148,7 +148,7 @@ class DetailsViewModelTest {
     }
 
     @Test
-    fun manualSourceSelectionUsesExactStreamRequestIdBeforeEmittingPlayback() = runTest(dispatcher) {
+    fun manualSourceSelectionEmitsPlaybackWithoutWaitingForSubtitles() = runTest(dispatcher) {
         val streamRequestId = "kitsu:show:episode-17"
         val playbackId = "kitsu:show:1:17"
         val stream = Stream(
@@ -165,12 +165,6 @@ class DetailsViewModelTest {
             lang = "en",
             addonName = "Subs"
         )
-        val specific = AddonSubtitle(
-            id = "specific",
-            url = "https://subs.example/specific.srt",
-            lang = "en",
-            addonName = "Subs"
-        )
 
         coEvery { repository.getStreams("series", streamRequestId, null, null) } returns listOf(stream)
         coEvery {
@@ -178,14 +172,6 @@ class DetailsViewModelTest {
                 "series", streamRequestId, null, null, null, null, null
             )
         } returns listOf(generic)
-        coEvery {
-            subtitleRepository.getSubtitlesForStream(
-                type = "series",
-                playbackId = streamRequestId,
-                stream = stream,
-                fallback = listOf(generic)
-            )
-        } returns listOf(generic, specific)
 
         val viewModel = newViewModel()
         viewModel.loadStreams(
@@ -204,16 +190,13 @@ class DetailsViewModelTest {
         viewModel.selectStreamForPlayback(stream)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) {
-            subtitleRepository.getSubtitlesForStream(
-                type = "series",
-                playbackId = streamRequestId,
-                stream = stream,
-                fallback = listOf(generic)
-            )
+        // Playback is emitted at once with the generic subtitles: matches for the exact file
+        // are fetched by the player session in the background, never before the stream starts.
+        coVerify(exactly = 0) {
+            subtitleRepository.getSubtitlesForStream(any(), any(), any(), any())
         }
         assertSame(stream, viewModel.state.value.autoPlayStream)
-        assertEquals(listOf(generic, specific), viewModel.state.value.addonSubtitles)
+        assertEquals(listOf(generic), viewModel.state.value.addonSubtitles)
         assertFalse(viewModel.state.value.isLoadingStreams)
     }
 

@@ -38,7 +38,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Provider
@@ -50,7 +49,7 @@ internal val SERIES_PLAYBACK_TYPES = setOf("series", "tv", "anime", "episode")
 // A next-episode hand-off that hasn't started playback by then is reported and falls back to the source list.
 internal const val AUTOPLAY_STALL_MS = 45_000L
 /** Longest a next-episode hand-off waits on any one subtitle lookup. */
-internal const val AUTOPLAY_SUBTITLE_STEP_MS = 10_000L
+
 // Once the next episode is opened: time allowed for its first frame (torrents start slowly).
 internal const val AUTOPLAY_FIRST_FRAME_MS = 60_000L
 
@@ -291,6 +290,7 @@ class PlaybackSessionViewModel @Inject constructor(
             viewModelScope.launch {
                 persistProfileState()
                 select("")
+                refineSubtitlesInBackground(playbackType, playbackId, stream, addonSubtitles.ifEmpty { null })
                 navChannel.trySend(PlaybackNav.OpenPlayer)
                 startTorrent(url, stream.fileIdx ?: -1, stream.behaviorHints?.filename ?: "")
             }
@@ -299,6 +299,7 @@ class PlaybackSessionViewModel @Inject constructor(
             viewModelScope.launch {
                 persistProfileState()
                 select(url)
+                refineSubtitlesInBackground(playbackType, playbackId, stream, addonSubtitles.ifEmpty { null })
                 openFor(playerPreference, url)
             }
         }
@@ -446,16 +447,9 @@ class PlaybackSessionViewModel @Inject constructor(
 
         episodeSwitchJob = viewModelScope.launch {
             try {
-                val streamsDeferred = async { requestOrFallback(emptyList()) { addonRepository.getStreams("series", nextStreamId) } }
-                val subtitlesDeferred = async {
-                    withTimeoutOrNull(AUTOPLAY_SUBTITLE_STEP_MS) {
-                        requestOrFallback(emptyList()) { subtitleRepository.getSubtitles("series", nextStreamId) }
-                    }.orEmpty()
-                }
-
-                val rawStreams = streamsDeferred.await()
-                switchStep = "finding subtitles for ${rawStreams.size} sources"
-                val addonSubs = subtitlesDeferred.await()
+                val rawStreams = requestOrFallback(emptyList()) { addonRepository.getStreams("series", nextStreamId) }
+                // Subtitles are fetched once the episode is playing (refineSubtitlesInBackground).
+                val addonSubs = emptyList<AddonSubtitle>()
                 switchStep = "ranking ${rawStreams.size} sources"
 
                 // Off the main thread: ranking a long list froze the UI on TV boxes.
@@ -514,19 +508,6 @@ class PlaybackSessionViewModel @Inject constructor(
 
                 // Auto-resolved: keep the guard active through subtitle refinement.
                 pendingEpisodeSwitch = null
-                switchStep = "finding subtitles (${if (nextUrl.startsWith("magnet:")) "torrent" else "direct link"})"
-                playbackStatus = "Next episode · finding subtitles"
-
-                // Subtitles never hold up the next episode: past the limit it opens with
-                // the generic results already fetched.
-                val sourceAwareSubs = withTimeoutOrNull(AUTOPLAY_SUBTITLE_STEP_MS) {
-                    subtitleRepository.getSubtitlesForStream(
-                        type = "series",
-                        playbackId = nextStreamId,
-                        stream = streamToPlay,
-                        fallback = addonSubs
-                    )
-                } ?: addonSubs
                 switchStep = "opening the source"
                 playbackStatus = "Next episode · opening $nextPlaybackTitle"
                 // Opening can stall after the switch itself is done: the new
@@ -555,7 +536,8 @@ class PlaybackSessionViewModel @Inject constructor(
                     url = nextUrl,
                     stream = streamToPlay,
                     candidates = streams,
-                    subtitles = sourceAwareSubs
+                    subtitles = addonSubs,
+                    subtitleRequestId = nextStreamId
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -659,19 +641,14 @@ class PlaybackSessionViewModel @Inject constructor(
                 profile
             )
 
-            val sourceAwareSubs = subtitleRepository.getSubtitlesForStream(
-                type = "series",
-                playbackId = epStreamId,
-                stream = streamToPlay,
-                fallback = addonSubs
-            )
             openEpisode(
                 playbackId = epPlaybackId,
                 title = epTitle,
                 url = epUrl,
                 stream = streamToPlay,
                 candidates = streams,
-                subtitles = sourceAwareSubs
+                subtitles = addonSubs,
+                subtitleRequestId = epStreamId
             )
         }
     }
@@ -689,13 +666,6 @@ class PlaybackSessionViewModel @Inject constructor(
         pendingEpisodeSwitch = null
         isEpisodeSwitchLoading = true
         episodeSwitchJob = viewModelScope.launch {
-            val sourceAwareSubs = subtitleRepository.getSubtitlesForStream(
-                type = "series",
-                playbackId = pending.streamRequestId,
-                stream = streamToPlay,
-                fallback = pending.addonSubs
-            )
-
             // Now save progress for current episode
             settle(
                 PlayerSessionResult(
@@ -715,7 +685,8 @@ class PlaybackSessionViewModel @Inject constructor(
                 url = sourceUrl,
                 stream = streamToPlay,
                 candidates = pending.streams,
-                subtitles = sourceAwareSubs
+                subtitles = pending.addonSubs,
+                subtitleRequestId = pending.streamRequestId
             )
         }
     }
@@ -839,13 +810,9 @@ class PlaybackSessionViewModel @Inject constructor(
         val requestType = nextStream.addonRequestType
         val requestId = nextStream.addonRequestId
         if (!requestType.isNullOrBlank() && !requestId.isNullOrBlank()) {
-            playbackStatus = "Finding subtitles for source $nextPosition"
-            val addonSubs = subtitleRepository.getSubtitlesForStream(
-                type = requestType,
-                playbackId = requestId,
-                stream = nextStream
-            )
-            selectedPlayerSubtitles = buildSubtitlePayload(nextStream, addonSubs)
+            // Opens with the stream's own subtitles; addon matches follow in the background.
+            selectedPlayerSubtitles = buildSubtitlePayload(nextStream, emptyList())
+            refineSubtitlesInBackground(requestType, requestId, nextStream, null)
         }
         playbackStatus = "Opening source $nextPosition of ${candidates.size}"
 
@@ -976,6 +943,33 @@ class PlaybackSessionViewModel @Inject constructor(
     private fun isPlayable(stream: Stream): Boolean =
         !stream.url.isNullOrBlank() || !stream.infoHash.isNullOrBlank()
 
+    private var subtitleRefineJob: Job? = null
+
+    /**
+     * Playback never waits for subtitles. It opens with the generic results already in hand,
+     * and this asks the addons for matches to the exact file (videoHash/size/filename) in the
+     * background; the player adds whatever arrives while the stream keeps playing.
+     */
+    private fun refineSubtitlesInBackground(
+        type: String,
+        requestId: String,
+        stream: Stream,
+        generic: List<AddonSubtitle>?
+    ) {
+        subtitleRefineJob?.cancel()
+        val playbackId = selectedPlaybackId
+        subtitleRefineJob = viewModelScope.launch {
+            val refined = subtitleRepository.getSubtitlesForStream(
+                type = type,
+                playbackId = requestId,
+                stream = stream,
+                fallback = generic
+            )
+            if (selectedPlaybackId != playbackId || currentStream != stream) return@launch
+            selectedPlayerSubtitles = buildSubtitlePayload(stream, refined)
+        }
+    }
+
     /** Puts a resolved episode on screen; the player recomposes on the new id and url. */
     private fun openEpisode(
         playbackId: String,
@@ -983,7 +977,8 @@ class PlaybackSessionViewModel @Inject constructor(
         url: String,
         stream: Stream,
         candidates: List<Stream>,
-        subtitles: List<AddonSubtitle>
+        subtitles: List<AddonSubtitle>,
+        subtitleRequestId: String
     ) {
         val subtitlePayload = buildSubtitlePayload(stream, subtitles)
         val sourcePayload = buildSourcePayload(candidates, stream)
@@ -1013,6 +1008,8 @@ class PlaybackSessionViewModel @Inject constructor(
             selectedPlayerSources = sourcePayload
             selectedVideoUrl = url
         }
+        // Empty means none were fetched yet: let the refinement fetch the generic list too.
+        refineSubtitlesInBackground("series", subtitleRequestId, stream, subtitles.ifEmpty { null })
     }
 
     /** A new hand-off supersedes the running one: its job and watchdogs stop, its late results are dropped. */

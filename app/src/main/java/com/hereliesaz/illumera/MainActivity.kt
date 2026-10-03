@@ -655,7 +655,7 @@ class MainActivity : ComponentActivity() {
             val session = hiltViewModel<PlaybackSessionViewModel>(viewModelStoreOwner = this@MainActivity)
             // A queue start stays pending while the viewer is on the advanced-to title's pages.
             LaunchedEffect(topKey) {
-                if (topKey !is DetailsKey && topKey !is CastKey && topKey !is StudioKey && topKey != PlayerKey) {
+                if (topKey !is DetailsKey && topKey !is CastKey && topKey !is StudioKey && topKey !is com.hereliesaz.illumera.ui.navigation.MoreLikeThisKey && topKey != PlayerKey) {
                     session.queueStartPending = false
                 }
             }
@@ -748,7 +748,11 @@ class MainActivity : ComponentActivity() {
             LumeraTheme(theme = currentTheme) {
                 CompositionLocalProvider(
                     LocalRoundCorners provides roundCorners,
-                    LocalHubRoundCorners provides hubRoundCorners
+                    LocalHubRoundCorners provides hubRoundCorners,
+                    // "More like this" from any card menu or Details page.
+                    com.hereliesaz.illumera.ui.components.LocalOpenMoreLikeThis provides { likeType, likeId, likeTitle ->
+                        BackStackOps.openMoreLikeThis(backStack, likeType, likeId, likeTitle)
+                    }
                 ) {
                 LumeraBackground {
                     if (currentProfile == null) {
@@ -1097,6 +1101,16 @@ class MainActivity : ComponentActivity() {
                                 entityKind = studioKey.kind,
                                 entityName = studioKey.name,
                                 sourceType = studioKey.sourceType,
+                                onNavigateToDetails = { navType, navId ->
+                                    BackStackOps.openDetails(backStack, type = navType, id = navId)
+                                }
+                            )
+                            }
+                            entry<com.hereliesaz.illumera.ui.navigation.MoreLikeThisKey> { likeKey ->
+                            com.hereliesaz.illumera.ui.morelikethis.MoreLikeThisScreen(
+                                type = likeKey.type,
+                                id = likeKey.id,
+                                title = likeKey.title,
                                 onNavigateToDetails = { navType, navId ->
                                     BackStackOps.openDetails(backStack, type = navType, id = navId)
                                 }

@@ -229,6 +229,11 @@ class ExoPlayerBackend(
     private var hasAppliedSubtitleLanguagePref = false
 
     private var externalSubtitleSources: Map<String, PlayerSubtitleSource> = emptyMap()
+    // External subtitle ids built into the media source now playing. Subtitles that arrive
+    // later are listed at once but only become playable after a rebuild of the source.
+    private var loadedExternalSubtitleIds: Set<String> = emptySet()
+    // Whether the viewer wants subtitles in this session (a remembered or chosen non-"None" track).
+    private var wantsSubtitles = false
     private var externalSubtitleLabelKeys: Map<String, String?> = emptyMap()
 
     private fun replaceExternalSubtitles(subtitles: List<PlayerSubtitleSource>) {
@@ -568,6 +573,7 @@ class ExoPlayerBackend(
             }
             pendingAudioTrackId = normalizedRequest.preferredAudioTrackId
             pendingSubtitleTrackId = normalizeSubtitleSelectionId(normalizedRequest.preferredSubtitleTrackId)
+            wantsSubtitles = pendingSubtitleTrackId.let { !it.isNullOrBlank() && it != SUBTITLE_OFF_ID }
             forcedSubtitleTrackId = pendingSubtitleTrackId?.takeIf { it in externalSubtitleSources.keys }
             hasAppliedAudioLanguagePref = false
             hasAppliedSubtitleLanguagePref = false
@@ -708,21 +714,56 @@ class ExoPlayerBackend(
             return
         }
 
+        // Switch now; the new source's subtitles follow. Waiting for every subtitle addon
+        // before switching held the stream on a spinner for up to the slowest addon's timeout.
+        // The previous source's subtitles may be specific to that file, so none carry over.
+        replaceExternalSubtitles(emptyList())
+        selectSourceAfterSubtitleResolution(sourceId, source)
         sourceSubtitleResolutionJob = scope.launch {
             val resolvedSubtitles = try {
                 resolver(source)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                // Never carry the previous source's external subtitles into a new source
-                // merely because resolution failed. Empty is honest; stale is corruption.
                 emptyList()
             }
-
             if (released || generation != sourceSelectionGeneration) return@launch
-            replaceExternalSubtitles(resolvedSubtitles)
-            selectSourceAfterSubtitleResolution(sourceId, source)
+            addExternalSubtitles(resolvedSubtitles)
         }
+    }
+
+    /**
+     * Subtitles found after playback started. They join the subtitle menu at once without
+     * touching playback. The source is rebuilt at the current position (a brief rebuffer)
+     * only when the viewer wants subtitles, so a forced-language track can be applied, or
+     * later when the viewer picks one of the new tracks.
+     */
+    fun addExternalSubtitles(subtitles: List<PlayerSubtitleSource>, forMediaUrl: String? = null) {
+        if (released) return
+        val request = loadRequest ?: return
+        // A list meant for another video (an episode change racing its load) is dropped;
+        // that load carries its own subtitles.
+        if (forMediaUrl != null && forMediaUrl != request.mediaUrl) return
+        val knownUrls = request.subtitles.mapTo(HashSet()) { it.url }
+        val added = subtitles.filter { it.url.isNotBlank() && it.url !in knownUrls }
+        if (added.isEmpty()) return
+        replaceExternalSubtitles(request.subtitles + added)
+        exoPlayer?.let { refreshTrackOptions(it.currentTracks) }
+        if (wantsSubtitles) {
+            val current = _uiState.value.selectedSubtitleTrackId
+                ?.takeIf { it != SUBTITLE_OFF_ID }
+            reloadCurrentSourceForSubtitles(current ?: loadRequest?.preferredSubtitleTrackId)
+        }
+    }
+
+    /** Rebuild the playing source at its current position so newly added subtitles load. */
+    private fun reloadCurrentSourceForSubtitles(subtitleSelection: String?) {
+        val id = currentSourceId ?: return
+        val option = _sourceOptions.value.firstOrNull { it.id == id } ?: return
+        // Reuse what is actually playing (a resolved torrent is a local URL, not the magnet).
+        val playingUrl = exoPlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
+        switchToSource(id, option.copy(url = playingUrl ?: resolvedTorrentUrls[id] ?: option.url))
+        pendingSubtitleTrackId = normalizeSubtitleSelectionId(subtitleSelection)
     }
 
     private fun selectSourceAfterSubtitleResolution(sourceId: String, source: PlayerSourceOption) {
@@ -836,6 +877,7 @@ class ExoPlayerBackend(
         val builder = player.trackSelectionParameters.buildUpon()
         builder.clearOverridesOfType(C.TRACK_TYPE_TEXT)
 
+        wantsSubtitles = id != SUBTITLE_OFF_ID
         if (id == SUBTITLE_OFF_ID) {
             forcedSubtitleTrackId = null
             builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
@@ -874,6 +916,14 @@ class ExoPlayerBackend(
                     playerView?.subtitleView?.visibility = android.view.View.VISIBLE
                 }
             }
+            return
+        }
+
+        // A subtitle that arrived after this source was built: rebuild so it can load.
+        if (id in externalSubtitleSources.keys && id !in loadedExternalSubtitleIds) {
+            forcedSubtitleTrackId = id
+            _uiState.update { it.copy(selectedSubtitleTrackId = id) }
+            reloadCurrentSourceForSubtitles(id)
             return
         }
 
@@ -1145,8 +1195,10 @@ class ExoPlayerBackend(
             // Ensure AssHandler exists before media source creation
             if (playbackSettings.assRendererEnabled) getOrCreateAssHandler()
 
+            val sidecarSubtitles = externalSubtitleSources
+            loadedExternalSubtitleIds = sidecarSubtitles.keys
             val mediaSource = withContext(Dispatchers.Default) {
-                val subtitleConfigs = externalSubtitleSources.map { (_, subtitle) ->
+                val subtitleConfigs = sidecarSubtitles.map { (_, subtitle) ->
                     MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
                         .setId(externalSubtitleTrackId(subtitle.id))
                         .setLabel(subtitle.label)
@@ -2021,7 +2073,9 @@ class ExoPlayerBackend(
                 }
                 if (forcedSubtitleMissing) {
                     selectSubtitleTrack(SUBTITLE_OFF_ID)
-                    // Off only for this source: the user still wants subtitles next time.
+                    // Off only for this source: the user still wants subtitles next time, and
+                    // a forced-language track that arrives late (addExternalSubtitles) is applied.
+                    wantsSubtitles = true
                     _uiState.update { it.copy(subtitleChoiceToRemember = subtitleId) }
                     hasAppliedSubtitleLanguagePref = true
                     return
