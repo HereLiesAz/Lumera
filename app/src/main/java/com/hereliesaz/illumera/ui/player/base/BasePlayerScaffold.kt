@@ -1454,22 +1454,22 @@ private fun PlayerControlsOverlay(
                         iconSize = 29.dp
                     )
 
-                    if (showNextSourceControl) {
+                    if (showNextEpisodeControl) {
                         ControlButton(
-                            icon = Icons.Default.ArrowForward,
-                            contentDescription = "Next source",
-                            onClick = onNextSource,
+                            icon = Icons.Default.SkipNext,
+                            contentDescription = "Next episode",
+                            onClick = onNextEpisode,
                             onFocused = onResetHideTimer,
                             buttonSize = 44.dp,
                             iconSize = 20.dp
                         )
                     }
 
-                    if (showNextEpisodeControl) {
+                    if (showNextSourceControl) {
                         ControlButton(
-                            icon = Icons.Default.SkipNext,
-                            contentDescription = "Next episode",
-                            onClick = onNextEpisode,
+                            icon = Icons.Default.ArrowForward,
+                            contentDescription = "Next source",
+                            onClick = onNextSource,
                             onFocused = onResetHideTimer,
                             buttonSize = 44.dp,
                             iconSize = 20.dp
