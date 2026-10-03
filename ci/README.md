@@ -19,9 +19,14 @@ set these in `local.properties` (never commit them):
 - `release.keyAlias`
 - `release.keyPassword`
 
-The equivalent CI environment variables are `RELEASE_STORE_FILE`,
-`RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and
-`RELEASE_KEY_PASSWORD`.
+The equivalent CI environment variables are `KEYSTORE_FILE`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, and `KEY_PASSWORD` (supplied by
+`HereLiesAz/workflows` `android-release.yml`).
+
+Release versions also come from that workflow as `-PversionCode` / `-PversionName`:
+versionCode is one more than the highest Google Play has accepted, and versionName
+raises only its last field. Local builds use the last published pair recorded in
+`version.properties`.
 
 Changing a release signing certificate is not an upgrade path: Android will
 reject a package signed by a different key over an existing installation.
