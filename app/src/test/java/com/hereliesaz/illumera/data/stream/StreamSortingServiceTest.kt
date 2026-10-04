@@ -388,4 +388,28 @@ class StreamSortingServiceTest {
         assertEquals("passes", result.first().url)
         assertEquals("fails-everything", result.last().url)
     }
+
+    @Test
+    fun preferredSize_doesNotOutrankSeedsWithDefaultTargets() {
+        val streams = listOf(
+            Stream(title = "Movie 2160p\n👤 0 💾 2.93 GB", url = "dead-near-target"),
+            Stream(title = "Movie 1080p\n👤 1 💾 2.98 GB", url = "one-seed-near-target"),
+            Stream(title = "Movie 1080p\n👤 2400 💾 2.1 GB", url = "healthy"),
+            Stream(title = "Movie 2160p\n👤 412 💾 58.2 GB", url = "huge")
+        )
+
+        val result = service.sortAndFilter(
+            streams = streams,
+            enabledQualities = StreamQuality.entries.toSet(),
+            excludePhrases = emptyList(),
+            addonSortOrders = emptyMap(),
+            preferredSizeMb = 3000,
+            minimumSeeds = 5,
+            profile = ProfileEntity(name = "Test")
+        ).mapNotNull { it.url }
+
+        assertEquals("healthy", result.first())
+        assertTrue(result.indexOf("huge") < result.indexOf("dead-near-target"))
+        assertTrue(result.indexOf("huge") < result.indexOf("one-seed-near-target"))
+    }
 }
