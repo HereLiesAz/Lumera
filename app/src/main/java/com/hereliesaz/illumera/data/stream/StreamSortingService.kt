@@ -299,12 +299,8 @@ class StreamSortingService @Inject constructor() {
         minimumSeeds: Int,
         parsed: Map<Stream, ParsedStreamInfo>
     ): Comparator<Stream> {
+        // Minimum seeds comes first: a source short of it is less likely to play at all.
         var comparator = compareBy<Stream> { stream ->
-            if (preferredSizeBytes <= 0L) 0L
-            else parsed[stream]?.sizeBytes?.let { abs(it - preferredSizeBytes) } ?: Long.MAX_VALUE / 4
-        }
-
-        comparator = comparator.thenBy { stream ->
             if (minimumSeeds <= 0) 0
             else {
                 val seeds = parsed[stream]?.seeds
@@ -315,6 +311,15 @@ class StreamSortingService @Inject constructor() {
                     else -> minimumSeeds - seeds
                 }
             }
+        }
+
+        // Closeness to the preferred size, in quarter-target bands. Exact byte distance would
+        // never tie, so it would decide the whole order and hide seeds, addon order and quality.
+        comparator = comparator.thenBy { stream ->
+            if (preferredSizeBytes <= 0L) 0L
+            else parsed[stream]?.sizeBytes
+                ?.let { abs(it - preferredSizeBytes) / (preferredSizeBytes / SIZE_BANDS_PER_TARGET).coerceAtLeast(1L) }
+                ?: Long.MAX_VALUE / 4
         }
 
         comparator = comparator.thenBy { addonSortOrders[it.addonTransportUrl] ?: Int.MAX_VALUE }
@@ -367,6 +372,7 @@ class StreamSortingService @Inject constructor() {
 
     companion object {
         private val SORT_KEYS = listOf("quality", "size", "seeds")
+        private const val SIZE_BANDS_PER_TARGET = 4L
         private val AUDIO_CUE_REGEX = Regex("(?i)\\b(audio|dub(?:bed)?|dual)\\b")
         private val SUBTITLE_CUE_REGEX = Regex("(?i)\\b(sub(?:title)?s?|subbed|cc|captions?)\\b")
         private val LANGUAGE_PATTERNS = java.util.concurrent.ConcurrentHashMap<String, Regex>()
