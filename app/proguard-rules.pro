@@ -7,14 +7,10 @@
 -keepattributes *Annotation*
 
 # ─── App code ───
-# Gson reads and writes app classes by field name and instantiates them reflectively,
-# so field names and constructors stay. Everything else (methods, unused classes,
-# class merging, inlining) is left to R8. Room, Hilt and Retrofit ship their own rules.
--keepclassmembers class com.hereliesaz.illumera.** {
-    <fields>;
-    <init>(...);
-}
--keepclassmembers enum com.hereliesaz.illumera.** { *; }
+# Keep all app classes to prevent R8 class merging/obfuscation issues
+# with Room, Gson, and Hilt. R8 still shrinks unused code and
+# obfuscates third-party libraries.
+-keep class com.hereliesaz.illumera.** { *; }
 
 # ─── Gson ───
 -keep class com.google.gson.reflect.TypeToken { *; }
@@ -25,20 +21,31 @@
 -keep class *_Impl { *; }
 
 # ─── Hilt / Dagger ───
+-keep class dagger.hilt.** { *; }
+-keep class javax.inject.** { *; }
 -keep @dagger.hilt.android.lifecycle.HiltViewModel class * { *; }
 
-# NanoHTTPD, ZXing, AndroidX Security, Media3, Retrofit and OkHttp are left to
-# their own consumer rules: none of them is reached by reflection from app code.
+
+# ─── NanoHTTPD (remote input hub) ───
+-keep class fi.iki.elonen.** { *; }
+
+# ─── ZXing ───
+-keep class com.google.zxing.** { *; }
+
+# ─── AndroidX Security (EncryptedSharedPreferences) ───
+-keep class androidx.security.crypto.** { *; }
 
 # ─── Compose ───
 -dontwarn androidx.compose.**
 
 # ─── Media3 / ExoPlayer ───
+-keep class androidx.media3.** { *; }
 -dontwarn androidx.media3.**
 
 # ─── Retrofit ───
 # Keep generic signature and annotations for Retrofit + Gson
 -keepattributes RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations
+-keep class retrofit2.** { *; }
 -keepclassmembers,allowshrinking,allowobfuscation interface * {
     @retrofit2.http.* <methods>;
 }
@@ -56,6 +63,7 @@
 # ─── OkHttp ───
 -dontwarn okhttp3.**
 -dontwarn okio.**
+-keep class okhttp3.** { *; }
 
 # ─── ACRA (Crash Reporting) ───
 -keep class org.acra.** { *; }
