@@ -35,13 +35,16 @@ val traktClientSecret = localOrEnv("TRAKT_CLIENT_SECRET", "TRAKT_CLIENT_SECRET")
 
 fun releaseSigningProp(propKey: String, envKey: String): String = localOrEnv(propKey, envKey)
 
-// Signing arrives from HereLiesAz/workflows android-release as the four standard variables.
+// Signing arrives from HereLiesAz/workflows android-play-release / android-github-release as the
+// four standard variables. KEY_PASSWORD falls back to the store password when it is not set.
 val releaseStoreFile = releaseSigningProp("release.storeFile", "KEYSTORE_FILE")
 val releaseStorePassword = releaseSigningProp("release.storePassword", "KEYSTORE_PASSWORD")
 val releaseKeyAlias = releaseSigningProp("release.keyAlias", "KEY_ALIAS")
 val releaseKeyPassword = releaseSigningProp("release.keyPassword", "KEY_PASSWORD")
-// Release versions come from HereLiesAz/workflows android-release as -PversionCode/-PversionName
-// (Play's highest code + 1). Local builds fall back to the last published pair in version.properties.
+    .ifBlank { releaseStorePassword }
+// Release versions come from HereLiesAz/workflows as -PversionCode/-PversionName (Play: its
+// highest code + 1; GitHub: the version contract's encoded code). Local builds fall back to the
+// last published pair in version.properties.
 val versionProperties = Properties().apply {
     val file = rootProject.file("version.properties")
     if (file.exists()) file.inputStream().use { load(it) }
