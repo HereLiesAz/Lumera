@@ -14,6 +14,7 @@ on:
       - "gradle.properties"
       - "version.properties"
   workflow_dispatch:
+permissions: {}
 jobs:
   hand-off:
     runs-on: ubuntu-latest
