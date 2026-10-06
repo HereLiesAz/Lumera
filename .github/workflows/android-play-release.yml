@@ -1,0 +1,21 @@
+# Built, signed and published by HereLiesAz/workflows (.github/workflows/android-play-release.yml):
+# the illumera Play bundle (play build type) on the shared Google Play tracks.
+# This file is the trigger contract; the central sync replaces it with a tracker.
+name: illumera Android Play Release
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "playbackcore/**"
+      - "assrender/**"
+      - "gradle/**"
+      - "*.gradle.kts"
+      - "gradle.properties"
+      - "version.properties"
+  workflow_dispatch:
+jobs:
+  hand-off:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "illumera Android Play Release runs centrally in HereLiesAz/workflows."

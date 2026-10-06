@@ -1,0 +1,21 @@
+# Built, signed and published by HereLiesAz/workflows (.github/workflows/android-github-release.yml):
+# a GitHub Release with the signed illumera APK (release build type, self-updating).
+# This file is the trigger contract; the central sync replaces it with a tracker.
+name: illumera Android GitHub Release
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "playbackcore/**"
+      - "assrender/**"
+      - "gradle/**"
+      - "*.gradle.kts"
+      - "gradle.properties"
+      - "version.properties"
+  workflow_dispatch:
+jobs:
+  hand-off:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "illumera Android GitHub Release runs centrally in HereLiesAz/workflows."
